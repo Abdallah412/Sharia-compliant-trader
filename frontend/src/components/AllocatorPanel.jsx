@@ -1,10 +1,18 @@
 import { useState } from 'react';
+import { Loader2 } from 'lucide-react';
 
-const RISK_PROFILES = {
-  conservative: '60% ETFs, 30% Stocks, 10% Cash',
-  moderate: '40% ETFs, 50% Stocks, 10% Cash',
-  aggressive: '20% ETFs, 70% Stocks, 10% Cash',
-};
+const RISK_PROFILES = ['conservative', 'moderate', 'aggressive'];
+
+function SummaryCard({ label, value, accent }) {
+  return (
+    <div className="bg-bg-elevated border border-border-main rounded-lg p-3 text-center">
+      <div className="text-xs text-text-muted uppercase tracking-wider mb-1">{label}</div>
+      <div className={`font-mono text-lg font-bold ${accent || 'text-text-primary'}`}>
+        {value}
+      </div>
+    </div>
+  );
+}
 
 export default function AllocatorPanel() {
   const [amount, setAmount] = useState('');
@@ -44,15 +52,18 @@ export default function AllocatorPanel() {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow p-6 mb-6">
-      <h2 className="text-xl font-bold text-navy mb-4">Portfolio Allocator</h2>
-      <p className="text-gray-600 text-sm mb-4">
+    <div className="bg-bg-card border border-border-main rounded-lg p-6">
+      <h2 className="font-display text-xl font-bold text-text-primary mb-1">
+        Portfolio Allocator
+      </h2>
+      <p className="text-text-muted text-sm mb-5">
         Enter a dollar amount to get a Shariah-compliant allocation recommendation.
       </p>
 
-      <div className="flex flex-wrap gap-4 items-end mb-4">
+      {/* Input row */}
+      <div className="flex flex-wrap gap-4 items-end mb-5">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm text-text-muted mb-1.5">
             Investment Amount ($)
           </label>
           <input
@@ -62,103 +73,126 @@ export default function AllocatorPanel() {
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             placeholder="500"
-            className="border border-gray-300 rounded px-3 py-2 w-40 focus:outline-none focus:ring-2 focus:ring-halal"
+            className="bg-bg-elevated border border-border-main rounded-lg px-3 py-2 w-40
+                       text-text-primary font-mono placeholder:text-text-dim
+                       focus:outline-none focus:border-brand-teal transition-colors"
           />
         </div>
 
+        {/* Risk profile toggle group */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm text-text-muted mb-1.5">
             Risk Profile
           </label>
-          <select
-            value={riskProfile}
-            onChange={(e) => setRiskProfile(e.target.value)}
-            className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-halal"
-          >
-            {Object.entries(RISK_PROFILES).map(([key, desc]) => (
-              <option key={key} value={key}>
-                {key.charAt(0).toUpperCase() + key.slice(1)} — {desc}
-              </option>
+          <div className="inline-flex rounded-lg border border-border-main overflow-hidden">
+            {RISK_PROFILES.map((profile) => (
+              <button
+                key={profile}
+                onClick={() => setRiskProfile(profile)}
+                className={`px-3 py-2 text-sm font-medium capitalize transition-colors ${
+                  riskProfile === profile
+                    ? 'bg-brand-teal text-white'
+                    : 'bg-bg-elevated text-text-muted hover:text-text-primary'
+                }`}
+              >
+                {profile}
+              </button>
             ))}
-          </select>
+          </div>
         </div>
 
         <button
           onClick={handleAllocate}
           disabled={loading}
-          className="bg-halal text-white px-6 py-2 rounded font-semibold hover:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="bg-brand-teal hover:bg-brand-teal-light text-white px-6 py-2 rounded-lg
+                     font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {loading ? 'Analyzing...' : 'Get Recommendation'}
+          {loading ? (
+            <span className="flex items-center gap-2">
+              <Loader2 size={16} className="animate-spin" />
+              Analyzing...
+            </span>
+          ) : (
+            'Get Recommendation'
+          )}
         </button>
       </div>
 
+      {/* Loading state */}
+      {loading && (
+        <div className="flex items-center justify-center gap-3 py-8 text-text-muted">
+          <Loader2 size={20} className="animate-spin text-brand-teal" />
+          <span className="text-sm">Analyzing halal universe...</span>
+        </div>
+      )}
+
+      {/* Error */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded p-3 mb-4 text-red-700 text-sm">
+        <div className="bg-loss/10 border border-loss/30 rounded-lg p-3 mb-4 text-loss text-sm">
           {error}
         </div>
       )}
 
-      {plan && (
-        <div className="mt-4">
-          {/* Summary Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <div className="bg-gray-50 rounded p-3 text-center">
-              <div className="text-xs text-gray-500">Total Amount</div>
-              <div className="text-lg font-bold">${plan.total_amount?.toLocaleString()}</div>
-            </div>
-            <div className="bg-green-50 rounded p-3 text-center">
-              <div className="text-xs text-gray-500">Invested</div>
-              <div className="text-lg font-bold text-halal">
-                ${plan.invested_amount?.toLocaleString()}
-              </div>
-            </div>
-            <div className="bg-blue-50 rounded p-3 text-center">
-              <div className="text-xs text-gray-500">Cash Reserve</div>
-              <div className="text-lg font-bold text-blue-700">
-                ${plan.cash_reserve?.toLocaleString()}
-              </div>
-            </div>
-            <div className="bg-gray-50 rounded p-3 text-center">
-              <div className="text-xs text-gray-500">Est. Dividend Yield</div>
-              <div className="text-lg font-bold">
-                {plan.expected_dividend_yield?.toFixed(2)}%
-              </div>
-            </div>
+      {/* Results */}
+      {plan && !loading && (
+        <div className="mt-4 space-y-4">
+          {/* Summary cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <SummaryCard
+              label="Total Amount"
+              value={`$${plan.total_amount?.toLocaleString()}`}
+            />
+            <SummaryCard
+              label="Invested"
+              value={`$${plan.invested_amount?.toLocaleString()}`}
+              accent="text-gain"
+            />
+            <SummaryCard
+              label="Cash Reserve"
+              value={`$${plan.cash_reserve?.toLocaleString()}`}
+              accent="text-brand-teal-light"
+            />
+            <SummaryCard
+              label="Est. Yield"
+              value={`${plan.expected_dividend_yield?.toFixed(2)}%`}
+            />
           </div>
 
-          {/* Allocations Table */}
+          {/* Allocations table */}
           {plan.allocations?.length > 0 && (
-            <div className="overflow-x-auto mb-4">
+            <div className="overflow-x-auto rounded-lg border border-border-main">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-navy text-white">
-                    <th className="px-3 py-2 text-left">Ticker</th>
-                    <th className="px-3 py-2 text-left">Name</th>
-                    <th className="px-3 py-2 text-left">Sector</th>
-                    <th className="px-3 py-2 text-right">Shares</th>
-                    <th className="px-3 py-2 text-right">Price</th>
-                    <th className="px-3 py-2 text-right">Total</th>
-                    <th className="px-3 py-2 text-right">%</th>
-                    <th className="px-3 py-2 text-left">Rationale</th>
+                  <tr className="bg-bg-elevated text-text-muted text-xs uppercase tracking-wider">
+                    <th className="px-3 py-2.5 text-left font-semibold">Ticker</th>
+                    <th className="px-3 py-2.5 text-left font-semibold">Name</th>
+                    <th className="px-3 py-2.5 text-left font-semibold">Sector</th>
+                    <th className="px-3 py-2.5 text-right font-semibold">Shares</th>
+                    <th className="px-3 py-2.5 text-right font-semibold">Price</th>
+                    <th className="px-3 py-2.5 text-right font-semibold">Total</th>
+                    <th className="px-3 py-2.5 text-right font-semibold">%</th>
+                    <th className="px-3 py-2.5 text-left font-semibold">Rationale</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-border-main">
                   {plan.allocations.map((a, i) => (
-                    <tr key={i} className="border-b hover:bg-gray-50">
-                      <td className="px-3 py-2 font-semibold">{a.ticker}</td>
-                      <td className="px-3 py-2 text-gray-600 truncate max-w-[150px]">
+                    <tr key={i} className="hover:bg-bg-hover transition-colors">
+                      <td className="px-3 py-2.5 font-mono font-bold text-brand-gold">
+                        {a.ticker}
+                      </td>
+                      <td className="px-3 py-2.5 text-text-muted truncate max-w-[150px]">
                         {a.company_name}
                       </td>
-                      <td className="px-3 py-2 text-gray-500">{a.sector}</td>
-                      <td className="px-3 py-2 text-right">{a.shares}</td>
-                      <td className="px-3 py-2 text-right">
+                      <td className="px-3 py-2.5 text-text-dim">{a.sector}</td>
+                      <td className="px-3 py-2.5 text-right font-mono">{a.shares}</td>
+                      <td className="px-3 py-2.5 text-right font-mono">
                         ${a.price_per_share?.toFixed(2)}
                       </td>
-                      <td className="px-3 py-2 text-right font-medium">
+                      <td className="px-3 py-2.5 text-right font-mono font-medium text-text-primary">
                         ${a.total_cost?.toLocaleString()}
                       </td>
-                      <td className="px-3 py-2 text-right">{a.portfolio_pct}%</td>
-                      <td className="px-3 py-2 text-gray-500 text-xs">
+                      <td className="px-3 py-2.5 text-right font-mono">{a.portfolio_pct}%</td>
+                      <td className="px-3 py-2.5 text-text-dim text-xs max-w-[200px]">
                         {a.rationale}
                       </td>
                     </tr>
@@ -168,37 +202,40 @@ export default function AllocatorPanel() {
             </div>
           )}
 
-          {/* Sector Breakdown */}
+          {/* Sector breakdown pills */}
           {plan.sector_breakdown && Object.keys(plan.sector_breakdown).length > 0 && (
-            <div className="mb-4">
-              <h3 className="font-semibold text-sm mb-2">Sector Breakdown</h3>
+            <div>
+              <h3 className="text-text-muted text-xs uppercase tracking-wider font-semibold mb-2">
+                Sector Breakdown
+              </h3>
               <div className="flex flex-wrap gap-2">
                 {Object.entries(plan.sector_breakdown)
                   .sort((a, b) => b[1] - a[1])
                   .map(([sector, pct]) => (
                     <span
                       key={sector}
-                      className="bg-gray-100 rounded-full px-3 py-1 text-xs"
+                      className="bg-bg-elevated border border-border-main rounded-full px-3 py-1
+                                 text-xs text-text-muted font-mono"
                     >
-                      {sector}: {pct}%
+                      {sector}: <span className="text-text-primary">{pct}%</span>
                     </span>
                   ))}
               </div>
             </div>
           )}
 
-          {/* Strategy Summary */}
+          {/* Strategy */}
           {plan.strategy_summary && (
-            <div className="bg-green-50 border border-green-200 rounded p-3 mb-4 text-sm">
+            <div className="bg-brand-teal/10 border border-brand-teal/30 rounded-lg p-3 text-sm text-brand-teal-light">
               <strong>Strategy:</strong> {plan.strategy_summary}
             </div>
           )}
 
           {/* Warnings */}
           {plan.warnings?.length > 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded p-3 text-sm">
+            <div className="bg-doubtful/10 border border-doubtful/30 rounded-lg p-3 text-sm text-doubtful">
               <strong>Warnings:</strong>
-              <ul className="list-disc list-inside mt-1">
+              <ul className="list-disc list-inside mt-1 space-y-0.5">
                 {plan.warnings.map((w, i) => (
                   <li key={i}>{w}</li>
                 ))}

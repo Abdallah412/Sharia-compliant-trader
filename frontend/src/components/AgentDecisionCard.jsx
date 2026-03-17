@@ -1,122 +1,91 @@
-import { useState } from 'react';
-import { motion } from 'framer-motion';
-import { Clock, Gavel, TrendingUp, Calculator, CheckCircle2 } from 'lucide-react';
-import ComplianceBadge from './ComplianceBadge';
+import { ArrowUpRight, ArrowDownRight, Pause, Clock } from 'lucide-react';
 
-const ACTION_STYLES = {
-  BUY: 'bg-gain/10 text-gain border-gain/30',
-  SELL: 'bg-loss/10 text-loss border-loss/30',
-  HOLD: 'bg-doubtful/10 text-doubtful border-doubtful/30',
+const ACTION_CONFIG = {
+  BUY: { icon: ArrowUpRight, color: 'text-gain', bg: 'bg-gain/10', label: 'BUY' },
+  SELL: { icon: ArrowDownRight, color: 'text-loss', bg: 'bg-loss/10', label: 'SELL' },
+  HOLD: { icon: Pause, color: 'text-brand-gold', bg: 'bg-brand-gold/10', label: 'HOLD' },
 };
 
-function ActionBadge({ action }) {
-  const key = (action || '').toUpperCase();
-  const style = ACTION_STYLES[key] || 'bg-bg-elevated text-text-muted border-border-main';
-  return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${style}`}>
-      {action || 'N/A'}
-    </span>
-  );
+function formatTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (isNaN(d)) return ts;
+  return d.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
-export default function AgentDecisionCard({ decision }) {
-  const [approved, setApproved] = useState(null);
+export default function AgentDecisionCard({ decision, compact = false }) {
+  const action = (decision.action || decision.side || 'HOLD').toUpperCase();
+  const config = ACTION_CONFIG[action] || ACTION_CONFIG.HOLD;
+  const ActionIcon = config.icon;
 
-  if (!decision) return null;
-
-  const {
-    ticker,
-    timestamp,
-    sheikh_verdict,
-    halal_status,
-    finance_signal,
-    confidence,
-    tax_verdict,
-    tax_recommendation,
-    final_action,
-    requires_approval,
-  } = decision;
+  if (compact) {
+    return (
+      <div className="flex items-center gap-3 px-3 py-2 bg-bg-elevated/50 rounded-lg border border-border-main/50 hover:border-border-light transition-colors">
+        <div className={`flex-shrink-0 w-7 h-7 rounded-md flex items-center justify-center ${config.bg}`}>
+          <ActionIcon size={14} className={config.color} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-bold text-text-primary">
+              {decision.ticker || '--'}
+            </span>
+            <span className={`text-xs font-semibold ${config.color}`}>
+              {config.label}
+            </span>
+            {decision.qty && (
+              <span className="text-xs text-text-muted">
+                x{decision.qty}
+              </span>
+            )}
+          </div>
+          {decision.reason && (
+            <p className="text-xs text-text-muted truncate mt-0.5">
+              {decision.reason}
+            </p>
+          )}
+        </div>
+        <div className="flex-shrink-0 flex items-center gap-1 text-text-dim text-xs">
+          <Clock size={10} />
+          <span>{formatTime(decision.timestamp || decision.created_at)}</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: -16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, ease: 'easeOut' }}
-      className="bg-bg-card border border-border-main rounded-lg p-4"
-    >
-      {/* Header: ticker + timestamp */}
-      <div className="flex items-center justify-between mb-3">
-        <span className="font-mono font-bold text-brand-gold text-lg">{ticker}</span>
-        {timestamp && (
-          <span className="text-text-dim text-xs flex items-center gap-1">
-            <Clock size={12} />
-            {new Date(timestamp).toLocaleString()}
-          </span>
-        )}
-      </div>
-
-      {/* Sheikh verdict */}
-      <div className="flex items-center gap-2 mb-2">
-        <Gavel size={14} className="text-text-muted" />
-        <span className="text-text-muted text-sm">Sheikh Verdict:</span>
-        <ComplianceBadge status={halal_status || sheikh_verdict} size="sm" />
-      </div>
-
-      {/* Finance signal */}
-      <div className="flex items-center gap-2 mb-2">
-        <TrendingUp size={14} className="text-text-muted" />
-        <span className="text-text-muted text-sm">Signal:</span>
-        <ActionBadge action={finance_signal} />
-        {confidence !== undefined && (
-          <span className="font-mono text-xs text-text-muted">
-            {confidence}% confidence
-          </span>
-        )}
-      </div>
-
-      {/* Tax verdict */}
-      {(tax_verdict || tax_recommendation) && (
-        <div className="flex items-center gap-2 mb-2">
-          <Calculator size={14} className="text-text-muted" />
-          <span className="text-text-muted text-sm">Tax:</span>
-          <span className="text-text-primary text-sm">
-            {tax_recommendation || tax_verdict}
-          </span>
+    <div className="bg-bg-card border border-border-main rounded-lg p-4">
+      <div className="flex items-start gap-3">
+        <div className={`flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center ${config.bg}`}>
+          <ActionIcon size={18} className={config.color} />
         </div>
-      )}
-
-      {/* Final decision */}
-      <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border-main">
-        <CheckCircle2 size={14} className="text-text-muted" />
-        <span className="text-text-muted text-sm font-medium">Final Decision:</span>
-        <ActionBadge action={final_action} />
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-mono text-base font-bold text-text-primary">
+              {decision.ticker || '--'}
+            </span>
+            <span className={`text-sm font-semibold ${config.color}`}>
+              {config.label}
+            </span>
+            {decision.qty && (
+              <span className="text-sm text-text-muted">x{decision.qty}</span>
+            )}
+          </div>
+          {decision.reason && (
+            <p className="text-sm text-text-muted leading-relaxed">
+              {decision.reason}
+            </p>
+          )}
+          <p className="text-xs text-text-dim mt-2 flex items-center gap-1">
+            <Clock size={11} />
+            {formatTime(decision.timestamp || decision.created_at)}
+          </p>
+        </div>
       </div>
-
-      {/* Approval buttons */}
-      {requires_approval && approved === null && (
-        <div className="flex gap-2 mt-3">
-          <button
-            onClick={() => setApproved(true)}
-            className="flex-1 py-1.5 rounded text-sm font-semibold bg-gain/10 text-gain
-                       border border-gain/30 hover:bg-gain/20 transition-colors"
-          >
-            Approve
-          </button>
-          <button
-            onClick={() => setApproved(false)}
-            className="flex-1 py-1.5 rounded text-sm font-semibold bg-loss/10 text-loss
-                       border border-loss/30 hover:bg-loss/20 transition-colors"
-          >
-            Reject
-          </button>
-        </div>
-      )}
-
-      {approved !== null && (
-        <div className={`mt-3 text-sm font-medium ${approved ? 'text-gain' : 'text-loss'}`}>
-          {approved ? 'Approved' : 'Rejected'}
-        </div>
-      )}
-    </motion.div>
+    </div>
   );
 }
