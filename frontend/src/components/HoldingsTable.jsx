@@ -1,106 +1,125 @@
+import { motion } from 'framer-motion';
+import { Briefcase } from 'lucide-react';
+import ComplianceBadge from './ComplianceBadge';
+
+const ROW_VARIANT = {
+  hidden: { opacity: 0, y: 6 },
+  visible: (i) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: i * 0.05, duration: 0.3, ease: 'easeOut' },
+  }),
+};
+
+function formatMoney(val) {
+  return Number(val || 0).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function DaysHeldCell({ daysHeld }) {
+  if (daysHeld == null) return <span className="text-text-dim">--</span>;
+
+  const daysToLongTerm = 365 - daysHeld;
+  if (daysToLongTerm > 0 && daysToLongTerm <= 30) {
+    return (
+      <span className="text-doubtful font-medium">
+        {daysHeld}d
+        <span className="block text-xs opacity-80">
+          Hold {daysToLongTerm} more
+        </span>
+      </span>
+    );
+  }
+
+  return <span>{daysHeld}</span>;
+}
+
 export default function HoldingsTable({ holdings, selectedTicker, onSelectTicker }) {
   if (!holdings || holdings.length === 0) {
     return (
-      <div className="bg-white rounded-xl shadow p-6">
-        <h2 className="text-lg font-bold text-navy mb-4">Holdings</h2>
-        <p className="text-gray-400 text-center py-8">No holdings to display</p>
+      <div className="bg-bg-card border border-border-main rounded-lg p-8 flex flex-col items-center justify-center text-center">
+        <Briefcase size={40} className="text-text-dim mb-3" />
+        <p className="text-text-muted text-sm">
+          No holdings yet. The bot will start buying soon.
+        </p>
       </div>
-    )
+    );
   }
 
   return (
-    <div className="bg-white rounded-xl shadow overflow-hidden">
-      <div className="px-6 py-4 border-b border-gray-100">
-        <h2 className="text-lg font-bold text-navy">Holdings</h2>
-      </div>
+    <div className="bg-bg-card border border-border-main rounded-lg overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-gray-50 text-left text-gray-500 text-xs uppercase tracking-wider">
-              <th className="px-4 py-3 font-semibold">Ticker</th>
-              <th className="px-4 py-3 font-semibold hidden sm:table-cell">Name</th>
-              <th className="px-4 py-3 font-semibold text-right">Shares</th>
-              <th className="px-4 py-3 font-semibold text-right">Price</th>
-              <th className="px-4 py-3 font-semibold text-right hidden md:table-cell">Value</th>
-              <th className="px-4 py-3 font-semibold text-right">P&L</th>
-              <th className="px-4 py-3 font-semibold text-right hidden lg:table-cell">P&L%</th>
-              <th className="px-4 py-3 font-semibold text-center">Halal</th>
-              <th className="px-4 py-3 font-semibold text-right hidden lg:table-cell">Days</th>
+          <thead className="sticky top-0 z-[1]">
+            <tr className="bg-bg-elevated text-text-muted text-xs uppercase tracking-wider">
+              <th className="px-4 py-3 text-left font-semibold">Ticker</th>
+              <th className="px-4 py-3 text-left font-semibold hidden sm:table-cell">Name</th>
+              <th className="px-4 py-3 text-right font-semibold">Shares</th>
+              <th className="px-4 py-3 text-right font-semibold">Price</th>
+              <th className="px-4 py-3 text-right font-semibold hidden md:table-cell">Value</th>
+              <th className="px-4 py-3 text-right font-semibold">Day P&L</th>
+              <th className="px-4 py-3 text-right font-semibold hidden lg:table-cell">Total P&L</th>
+              <th className="px-4 py-3 text-right font-semibold hidden lg:table-cell">Days</th>
+              <th className="px-4 py-3 text-center font-semibold">Halal</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
-            {holdings.map((h) => {
-              const isSelected = selectedTicker === h.ticker
+          <tbody className="divide-y divide-border-main">
+            {holdings.map((h, i) => {
+              const isSelected = selectedTicker === h.ticker;
+              const dayPnl = h.day_pnl ?? h.pnl ?? 0;
+              const totalPnl = h.total_pnl ?? h.pnl ?? 0;
+
               return (
-                <tr
+                <motion.tr
                   key={h.ticker}
-                  onClick={() => onSelectTicker(h.ticker)}
-                  className={`cursor-pointer transition-colors hover:bg-gray-50 ${
-                    isSelected ? 'bg-blue-50 hover:bg-blue-50' : ''
+                  custom={i}
+                  initial="hidden"
+                  animate="visible"
+                  variants={ROW_VARIANT}
+                  onClick={() => onSelectTicker?.(h.ticker)}
+                  className={`cursor-pointer transition-colors hover:bg-bg-hover ${
+                    isSelected
+                      ? 'bg-bg-elevated border-l-2 border-brand-teal'
+                      : 'border-l-2 border-transparent'
                   }`}
                 >
-                  <td className="px-4 py-3 font-bold text-navy">{h.ticker}</td>
-                  <td className="px-4 py-3 text-gray-600 hidden sm:table-cell truncate max-w-[160px]">
+                  <td className="px-4 py-3 font-mono font-bold text-text-primary hover:text-brand-gold transition-colors">
+                    {h.ticker}
+                  </td>
+                  <td className="px-4 py-3 text-text-muted hidden sm:table-cell truncate max-w-[160px]">
                     {h.name || '--'}
                   </td>
-                  <td className="px-4 py-3 text-right">{h.shares}</td>
-                  <td className="px-4 py-3 text-right">${Number(h.price || 0).toFixed(2)}</td>
-                  <td className="px-4 py-3 text-right hidden md:table-cell">
-                    ${Number(h.value || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  <td className="px-4 py-3 text-right font-mono">{h.shares}</td>
+                  <td className="px-4 py-3 text-right font-mono">
+                    ${formatMoney(h.price)}
                   </td>
-                  <td className={`px-4 py-3 text-right font-medium ${
-                    (h.pnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'
-                  }`}>
-                    {(h.pnl || 0) >= 0 ? '+' : ''}${Number(h.pnl || 0).toFixed(2)}
+                  <td className="px-4 py-3 text-right font-mono hidden md:table-cell">
+                    ${formatMoney(h.value)}
                   </td>
-                  <td className={`px-4 py-3 text-right hidden lg:table-cell font-medium ${
-                    (h.pnl_pct || 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                  <td className={`px-4 py-3 text-right font-mono font-medium ${
+                    dayPnl >= 0 ? 'text-gain' : 'text-loss'
                   }`}>
-                    {(h.pnl_pct || 0) >= 0 ? '+' : ''}{Number(h.pnl_pct || 0).toFixed(2)}%
+                    {dayPnl >= 0 ? '+' : ''}${formatMoney(dayPnl)}
+                  </td>
+                  <td className={`px-4 py-3 text-right font-mono font-medium hidden lg:table-cell ${
+                    totalPnl >= 0 ? 'text-gain' : 'text-loss'
+                  }`}>
+                    {totalPnl >= 0 ? '+' : ''}${formatMoney(totalPnl)}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono text-text-muted hidden lg:table-cell">
+                    <DaysHeldCell daysHeld={h.days_held} />
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <HalalBadge status={h.halal_status} />
+                    <ComplianceBadge status={h.halal_status} size="sm" />
                   </td>
-                  <td className="px-4 py-3 text-right text-gray-500 hidden lg:table-cell">
-                    {h.days_held ?? '--'}
-                  </td>
-                </tr>
-              )
+                </motion.tr>
+              );
             })}
           </tbody>
         </table>
       </div>
     </div>
-  )
-}
-
-function HalalBadge({ status }) {
-  const normalized = (status || '').toUpperCase()
-
-  if (normalized === 'HALAL' || normalized === 'COMPLIANT') {
-    return (
-      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-800">
-        HALAL
-      </span>
-    )
-  }
-  if (normalized === 'REVIEW' || normalized === 'DOUBTFUL') {
-    return (
-      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800">
-        REVIEW
-      </span>
-    )
-  }
-  if (normalized === 'HARAM' || normalized === 'NON_COMPLIANT') {
-    return (
-      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-800">
-        HARAM
-      </span>
-    )
-  }
-  return (
-    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-gray-100 text-gray-500">
-      {status || 'N/A'}
-    </span>
-  )
+  );
 }

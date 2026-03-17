@@ -1,5 +1,37 @@
 export default {
-  content: ["./index.html", "./src/**/*.{js,jsx}"],
-  theme: { extend: { colors: { navy: '#0B2545', halal: '#1B6B3A' } } },
-  plugins: []
+  content: ['./index.html', './src/**/*.{js,jsx}'],
+  theme: {
+    extend: {
+      colors: {
+        'bg-base': '#080E14',
+        'bg-card': '#0D1620',
+        'bg-elevated': '#132030',
+        'bg-hover': '#1A2C40',
+        'brand-teal': '#0D7377',
+        'brand-teal-light': '#14A085',
+        'brand-gold': '#C9A84C',
+        'brand-navy': '#0B2545',
+        'gain': '#22C55E',
+        'gain-muted': '#16A34A',
+        'loss': '#EF4444',
+        'loss-muted': '#DC2626',
+        'halal': '#16A34A',
+        'halal-bg': '#052E16',
+        'doubtful': '#D97706',
+        'doubtful-bg': '#1C1007',
+        'haram': '#DC2626',
+        'haram-bg': '#1C0505',
+        'text-primary': '#E2E8F0',
+        'text-muted': '#64748B',
+        'text-dim': '#334155',
+        'border-main': '#1E3A5A',
+        'border-light': '#2A4A6A',
+      },
+      fontFamily: {
+        display: ["'Crimson Pro'", 'serif'],
+        mono: ["'IBM Plex Mono'", 'monospace'],
+      },
+    },
+  },
+  plugins: [],
 }

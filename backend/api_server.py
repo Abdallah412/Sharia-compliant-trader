@@ -7,13 +7,18 @@ trade management, and bot control.
 import os
 import csv
 import json
+import hmac
+import hashlib
 import logging
+import re
+import secrets
 from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 load_dotenv()
 
@@ -22,6 +27,40 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
 )
+
+# ---------------------------------------------------------------------------
+# Security: API Key Authentication
+# ---------------------------------------------------------------------------
+API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
+if not API_SECRET_KEY:
+    API_SECRET_KEY = secrets.token_urlsafe(32)
+    logger.warning(
+        "API_SECRET_KEY not set in environment. Generated ephemeral key. "
+        "Set API_SECRET_KEY in .env for persistent authentication."
+    )
+
+# Ticker symbol validation regex: 1-10 uppercase letters, dots, hyphens only
+TICKER_REGEX = re.compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?(-[A-Z]{1,2})?$")
+
+
+def _validate_ticker(ticker: str) -> str:
+    """Validate and sanitize a ticker symbol. Raises HTTPException on invalid input."""
+    ticker = ticker.upper().strip()
+    if not ticker or len(ticker) > 10:
+        raise HTTPException(status_code=400, detail="Invalid ticker symbol")
+    if not TICKER_REGEX.match(ticker):
+        raise HTTPException(
+            status_code=400,
+            detail="Ticker must contain only uppercase letters, dots, and hyphens (1-10 chars)",
+        )
+    return ticker
+
+
+async def verify_api_key(x_api_key: str = Header(None)):
+    """Dependency that verifies the API key for protected endpoints."""
+    if not x_api_key or not hmac.compare_digest(x_api_key, API_SECRET_KEY):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return True
 
 # ---------------------------------------------------------------------------
 # Sibling module imports
@@ -34,7 +73,27 @@ from schwab_auth import get_client, get_account_balance, get_positions, get_toke
 
 # These modules may not exist yet — import defensively
 try:
-    from tax_engine import get_ytd_gains, get_loss_harvest_opportunities, estimate_tax
+    from tax_engine import TaxEngine as _TaxEngine
+    _tax_engine_instance = _TaxEngine()
+
+    def get_ytd_gains():
+        """Wrapper -- returns YTD gains from trade log."""
+        import pandas as pd
+        if not TRADE_LOG_PATH.exists():
+            return {"short_term_gains": 0, "long_term_gains": 0, "total_realized": 0, "estimated_tax": 0}
+        df = pd.read_csv(TRADE_LOG_PATH)
+        if "date" not in df.columns and "timestamp" in df.columns:
+            df["date"] = df["timestamp"]
+        if "gain" not in df.columns:
+            return {"short_term_gains": 0, "long_term_gains": 0, "total_realized": 0, "estimated_tax": 0}
+        return _tax_engine_instance.get_ytd_gains(df)
+
+    def get_loss_harvest_opportunities():
+        return []
+
+    def estimate_tax():
+        return get_ytd_gains().get("estimated_tax", 0)
+
 except ImportError:
     logger.warning("tax_engine not found — /api/tax endpoint will be unavailable")
     get_ytd_gains = None
@@ -42,10 +101,12 @@ except ImportError:
     estimate_tax = None
 
 try:
-    from portfolio_manager import PortfolioManager
+    from portfolio_manager import load_portfolio, get_portfolio_summary, get_all_holdings
 except ImportError:
     logger.warning("portfolio_manager not found — some endpoints will use fallback data")
-    PortfolioManager = None
+    load_portfolio = None
+    get_portfolio_summary = None
+    get_all_holdings = None
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -75,13 +136,28 @@ app = FastAPI(
     version="1.0.0",
 )
 
+ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-API-Key"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Global exception handler: prevent leaking internal details
+# ---------------------------------------------------------------------------
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch unhandled exceptions and return a safe error response."""
+    logger.error("Unhandled error on %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -235,9 +311,7 @@ async def get_trades():
 @app.get("/api/compliance/{ticker}")
 async def get_compliance(ticker: str):
     """On-demand Shariah screen via ShariahScreener."""
-    ticker = ticker.upper().strip()
-    if not ticker or len(ticker) > 10:
-        raise HTTPException(status_code=400, detail="Invalid ticker symbol")
+    ticker = _validate_ticker(ticker)
 
     result = screener.screen(ticker)
     return {
@@ -260,9 +334,7 @@ async def get_compliance(ticker: str):
 @app.get("/api/price/{ticker}")
 async def get_price(ticker: str):
     """Current price + EMA20 + EMA50 + news sentiment score."""
-    ticker = ticker.upper().strip()
-    if not ticker or len(ticker) > 10:
-        raise HTTPException(status_code=400, detail="Invalid ticker symbol")
+    ticker = _validate_ticker(ticker)
 
     try:
         current_price = get_current_price(ticker)
@@ -317,7 +389,7 @@ async def get_tax():
         }
     except Exception as exc:
         logger.error("Tax calculation failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Tax calculation failed")
 
 
 @app.get("/api/decisions")
@@ -338,8 +410,8 @@ async def get_decisions():
 
 
 @app.post("/api/bot/toggle")
-async def toggle_bot():
-    """Enable/disable live trading (toggle DRY_RUN)."""
+async def toggle_bot(authorized: bool = Depends(verify_api_key)):
+    """Enable/disable live trading (toggle DRY_RUN). Requires API key."""
     global DRY_RUN
     DRY_RUN = not DRY_RUN
     mode = "DRY RUN (paper)" if DRY_RUN else "LIVE TRADING"
@@ -352,6 +424,7 @@ async def allocate_portfolio(
     amount: float,
     risk_profile: str = "moderate",
     use_ai: bool = True,
+    authorized: bool = Depends(verify_api_key),
 ):
     """
     Given a dollar amount, recommend how to distribute funds across halal stocks.
@@ -375,19 +448,23 @@ async def allocate_portfolio(
         raise
     except Exception as exc:
         logger.error("Allocation failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Allocation failed")
 
 
 @app.post("/api/approve/{trade_id}")
-async def approve_trade(trade_id: str):
-    """Approve a pending trade."""
+async def approve_trade(trade_id: str, authorized: bool = Depends(verify_api_key)):
+    """Approve a pending trade. Requires API key."""
+    # Validate trade_id format to prevent injection
+    if not trade_id or len(trade_id) > 64 or not re.match(r"^[a-zA-Z0-9_-]+$", trade_id):
+        raise HTTPException(status_code=400, detail="Invalid trade ID format")
+
     if trade_id not in PENDING_TRADES:
-        raise HTTPException(status_code=404, detail=f"Trade {trade_id} not found or already processed")
+        raise HTTPException(status_code=404, detail="Trade not found or already processed")
 
     trade = PENDING_TRADES.pop(trade_id)
     trade["approved"] = True
     trade["approved_at"] = datetime.now().isoformat()
-    logger.info("Trade %s approved: %s", trade_id, trade)
+    logger.info("Trade %s approved via API", trade_id)
 
     return {"trade_id": trade_id, "status": "approved", "trade": trade}
 
@@ -400,9 +477,10 @@ if __name__ == "__main__":
     import uvicorn
 
     logger.info("Starting Halal Trading Bot API on port %d", API_PORT)
+    bind_host = os.getenv("API_HOST", "127.0.0.1")
     uvicorn.run(
         "api_server:app",
-        host="0.0.0.0",
+        host=bind_host,
         port=API_PORT,
         reload=False,
         log_level="info",

@@ -39,13 +39,21 @@ except ImportError:
         logger.info("[NO-OP] trading_bot.run_daily_cycle not available")
 
 try:
-    from notifier import send_daily_summary, send_notification
+    from notifier import send_daily_summary as _send_daily_summary_async
+
+    async def send_daily_summary():
+        """Wrapper that calls the async notifier with empty defaults."""
+        await _send_daily_summary_async({}, [])
+
 except ImportError:
     logger.warning("notifier not found — notification jobs will be no-ops")
     async def send_daily_summary():
         logger.info("[NO-OP] notifier.send_daily_summary not available")
-    async def send_notification(msg):
-        logger.info("[NO-OP] notifier.send_notification: %s", msg)
+
+# send_notification is not provided by notifier.py; define a logging fallback
+async def send_notification(msg):
+    """Send a generic notification via logging (notifier has no send_notification)."""
+    logger.info("Notification: %s", msg)
 
 try:
     from schwab_auth import get_token_age_days
@@ -61,10 +69,11 @@ except ImportError:
     ShariahScreener = None
 
 try:
-    from portfolio_manager import PortfolioManager
+    from portfolio_manager import load_portfolio, get_all_holdings
 except ImportError:
     logger.warning("portfolio_manager not found — some scheduled tasks will be limited")
-    PortfolioManager = None
+    load_portfolio = None
+    get_all_holdings = None
 
 try:
     from zakat_calculator import calculate_zakat, get_zakat_report
@@ -144,10 +153,10 @@ async def job_quarterly_compliance_rescreen():
 
         # Get current holdings
         tickers = []
-        if PortfolioManager is not None:
+        if load_portfolio is not None:
             try:
-                pm = PortfolioManager()
-                tickers = pm.get_tickers() if hasattr(pm, "get_tickers") else []
+                portfolio = load_portfolio()
+                tickers = list(portfolio.get("positions", {}).keys())
             except Exception:
                 pass
 
@@ -288,9 +297,10 @@ async def main():
         logger.info("  [%s] %s — next run: %s", job.id, job.name, job.next_run_time)
 
     # Start uvicorn API server
+    bind_host = os.getenv("API_HOST", "127.0.0.1")
     config = uvicorn.Config(
         "api_server:app",
-        host="0.0.0.0",
+        host=bind_host,
         port=api_port,
         log_level="info",
     )

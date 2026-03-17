@@ -67,7 +67,44 @@ except ImportError:
     get_portfolio_summary = None  # type: ignore[assignment]
 
 try:
-    from notifier import send_trade_alert, send_compliance_alert, send_daily_summary
+    from notifier import (
+        send_trade_alert as _send_trade_alert_async,
+        send_compliance_alert as _send_compliance_alert_async,
+        send_daily_summary as _send_daily_summary_async,
+    )
+
+    def _run_async(coro):
+        """Run an async coroutine from synchronous code."""
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            # We're inside an existing event loop; schedule and don't block
+            asyncio.ensure_future(coro)
+        else:
+            asyncio.run(coro)
+
+    def send_trade_alert(data):
+        _run_async(_send_trade_alert_async(data))
+
+    def send_compliance_alert(message):
+        # notifier expects (ticker, old_status, new_status) but trading_bot
+        # passes a single alert message string.  Extract ticker or pass safely.
+        _run_async(_send_compliance_alert_async(
+            ticker=str(message),
+            old_status="HALAL",
+            new_status="HARAM",
+        ))
+
+    def send_daily_summary(summary):
+        # notifier expects (portfolio, trades) but trading_bot passes a single
+        # summary dict.  Adapt the call.
+        portfolio = summary.get("portfolio", {})
+        trades = summary.get("orders_placed", [])
+        _run_async(_send_daily_summary_async(portfolio, trades))
+
 except ImportError:
     send_trade_alert = None  # type: ignore[assignment]
     send_compliance_alert = None  # type: ignore[assignment]
@@ -524,6 +561,18 @@ def run_daily_cycle() -> dict:
         })
 
     # ------------------------------------------------------------------
+    # 2c. Refresh balance and positions after sells to avoid stale data
+    # ------------------------------------------------------------------
+    if summary["orders_placed"]:
+        try:
+            balance = get_account_balance(client)
+            cash_balance = balance.get("cash_balance", cash_balance)
+            total_value = balance.get("total_value", total_value)
+            positions = get_positions(client)
+        except Exception as exc:
+            logger.warning("Failed to refresh balance after sells: %s", exc)
+
+    # ------------------------------------------------------------------
     # 3. Scan watchlist
     # ------------------------------------------------------------------
     held_tickers = {p["ticker"] for p in positions}
@@ -611,15 +660,41 @@ def run_daily_cycle() -> dict:
             pipeline_result = {}
             if run_pipeline is not None:
                 try:
+                    current_price_for_pipeline = get_current_price(ticker)
+                    # Build the agent-specific input dicts the orchestrator expects
+                    sheikh_input = {
+                        "ticker": ticker,
+                        "sector": screen.sector,
+                        "industry": screen.industry,
+                        "debt_ratio": screen.debt_ratio or 0.0,
+                        "cash_ratio": screen.cash_ratio or 0.0,
+                        "revenue_total": fundamentals.get("totalRevenue", 0),
+                        "revenue_impermissible": 0.0,
+                        "dividend_yield": fundamentals.get("dividendYield", 0) or 0.0,
+                        "scholarly_flags": screen.warnings,
+                    }
+                    finance_input = {
+                        "ticker": ticker,
+                        "current_price": current_price_for_pipeline,
+                        "ema20": current_price_for_pipeline,  # simplified
+                        "ema50": current_price_for_pipeline,
+                        "ema_signal": signal,
+                        "news_sentiment_score": float(news_score),
+                        "top_headlines": news.get("top_headlines", []),
+                        "earnings_surprise_pct": 0.0,
+                        "forward_pe": fundamentals.get("forwardPE", 0) or 0.0,
+                        "analyst_consensus": "none",
+                        "vix_level": macro.get("vix", 0) or 0.0,
+                        "macro_summary": f"Macro risk: {macro.get('macro_risk', 'unknown')}",
+                    }
                     pipeline_result = run_pipeline(
                         ticker=ticker,
-                        signal=signal,
-                        confidence=confidence,
-                        news=news,
-                        fundamentals=fundamentals,
-                        macro=macro,
-                        sheikh_result=sheikh_result,
-                        screen_result=screen.to_dict(),
+                        action=signal,
+                        quantity=1,  # placeholder; actual sizing done later
+                        price=current_price_for_pipeline,
+                        sheikh_input=sheikh_input,
+                        finance_input=finance_input,
+                        accountant_input=None,  # use defaults
                     )
                 except Exception as exc:
                     logger.error("Orchestrator pipeline failed for %s: %s", ticker, exc)
@@ -656,12 +731,12 @@ def run_daily_cycle() -> dict:
 
                 # Position sizing
                 if calculate_position_size is not None:
+                    is_etf = ticker in WATCHLIST_ETFS
                     qty = calculate_position_size(
+                        portfolio_value=total_value,
                         ticker=ticker,
-                        price=current_price,
-                        cash=cash_balance,
-                        total_value=total_value,
-                        confidence=finance_confidence,
+                        is_etf=is_etf,
+                        confidence_multiplier=min(finance_confidence / 100.0, 1.0),
                     )
                 else:
                     # Fallback: invest up to 5% of portfolio or available cash
@@ -685,15 +760,22 @@ def run_daily_cycle() -> dict:
                     continue
 
                 # Wash sale check via tax engine
-                if TaxEngine is not None:
+                if TaxEngine is not None and TRADE_LOG_CSV.exists():
                     try:
+                        import pandas as pd
                         engine = TaxEngine()
-                        if hasattr(engine, "check_wash_sale") and engine.check_wash_sale(ticker):
-                            log_decision({
-                                "ticker": ticker, "signal": "BUY",
-                                "action": "SKIP", "reason": "wash_sale_window",
-                            })
-                            continue
+                        trade_df = pd.read_csv(TRADE_LOG_CSV)
+                        if "date" not in trade_df.columns and "timestamp" in trade_df.columns:
+                            trade_df["date"] = trade_df["timestamp"]
+                        if "date" in trade_df.columns:
+                            ws_result = engine.check_wash_sale(ticker, "buy", trade_df)
+                            if ws_result.get("violation", False):
+                                log_decision({
+                                    "ticker": ticker, "signal": "BUY",
+                                    "action": "SKIP", "reason": "wash_sale_window",
+                                    "wash_sale_warning": ws_result.get("warning", ""),
+                                })
+                                continue
                     except Exception:
                         pass
 
@@ -725,6 +807,10 @@ def run_daily_cycle() -> dict:
                     "sheikh_verdict": sheikh_verdict,
                     "news_score": news_score, "confidence": finance_confidence,
                 })
+
+                # Update tracking state so subsequent iterations have accurate data
+                held_tickers.add(ticker)
+                cash_balance -= order_total
 
             # --- SELL rules (priority order) ---
             elif final_action == "SELL" and ticker in held_tickers:
@@ -807,10 +893,29 @@ def run_daily_cycle() -> dict:
     summary["duration_seconds"] = (cycle_end - cycle_start).total_seconds()
 
     # Update portfolio state if available
-    if save_portfolio is not None:
+    if save_portfolio is not None and load_portfolio is not None:
         try:
             updated_positions = get_positions(client)
-            save_portfolio(updated_positions)
+            portfolio = load_portfolio()
+            # Rebuild positions dict from broker data
+            new_positions = {}
+            for pos in updated_positions:
+                t = pos.get("ticker", "")
+                if not t:
+                    continue
+                existing = portfolio.get("positions", {}).get(t, {})
+                new_positions[t] = {
+                    "qty": pos.get("quantity", 0),
+                    "avg_price": pos.get("cost_basis", existing.get("avg_price", 0.0)),
+                    "first_bought": existing.get("first_bought", datetime.now().isoformat()),
+                    "last_action": existing.get("last_action", ""),
+                    "last_action_date": existing.get("last_action_date", ""),
+                }
+            portfolio["positions"] = new_positions
+            portfolio["cash"] = balance.get("cash_balance", portfolio.get("cash", 0.0))
+            if portfolio.get("initial_value", 0.0) == 0.0:
+                portfolio["initial_value"] = balance.get("total_value", 0.0)
+            save_portfolio(portfolio)
         except Exception as exc:
             logger.error("Failed to save portfolio: %s", exc)
 

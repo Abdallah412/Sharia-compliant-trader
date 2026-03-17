@@ -35,7 +35,7 @@ def _make_mock_client(payload: dict):
 # ===========================================================================
 
 class TestSheikhAgent:
-    @patch.object(sheikh_agent, "client")
+    @patch.object(sheikh_agent, "_client")
     def test_sheikh_haram_stops_pipeline(self, mock_client_attr):
         """When the Sheikh returns HARAM the orchestrator should get a REJECT-able result."""
         haram_response = {
@@ -65,7 +65,7 @@ class TestSheikhAgent:
         assert result["verdict"] == "HARAM"
         assert result["recommendation"] == "DO_NOT_INVEST"
 
-    @patch.object(sheikh_agent, "client")
+    @patch.object(sheikh_agent, "_client")
     def test_sheikh_halal_continues(self, mock_client_attr):
         """When the Sheikh returns HALAL the pipeline should continue."""
         halal_response = {
@@ -113,8 +113,8 @@ class TestOrchestratorDecisionHierarchy:
       4. Finance says SELL → SKIP even if Sheikh says HALAL
     """
 
-    @patch.object(sheikh_agent, "client")
-    @patch.object(finance_agent, "client")
+    @patch.object(sheikh_agent, "_client")
+    @patch.object(finance_agent, "_client")
     def test_haram_overrides_buy(self, mock_fin_client, mock_sheikh_client):
         """HARAM verdict overrides any BUY signal."""
         mock_sheikh_client.messages.create.return_value = _mock_anthropic_response({
@@ -157,8 +157,8 @@ class TestOrchestratorDecisionHierarchy:
         )
         assert orchestrator_decision == "REJECT"
 
-    @patch.object(sheikh_agent, "client")
-    @patch.object(finance_agent, "client")
+    @patch.object(sheikh_agent, "_client")
+    @patch.object(finance_agent, "_client")
     def test_halal_plus_sell_equals_skip(self, mock_fin_client, mock_sheikh_client):
         """HALAL + SELL signal → orchestrator should SKIP."""
         mock_sheikh_client.messages.create.return_value = _mock_anthropic_response({
@@ -210,7 +210,7 @@ class TestOrchestratorDecisionHierarchy:
         orchestrator_decision = "SKIP" if finance_result["signal"] == "SELL" else "EXECUTE"
         assert orchestrator_decision == "SKIP"
 
-    @patch.object(sheikh_agent, "client")
+    @patch.object(sheikh_agent, "_client")
     def test_doubtful_triggers_review(self, mock_sheikh_client):
         """DOUBTFUL verdict should trigger manual review."""
         mock_sheikh_client.messages.create.return_value = _mock_anthropic_response({

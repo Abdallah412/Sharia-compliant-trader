@@ -21,6 +21,16 @@ CALLBACK_URL = os.getenv("SCHWAB_CALLBACK_URL", "https://127.0.0.1")
 TOKEN_PATH = os.getenv("SCHWAB_TOKEN_PATH", "schwab_token.json")
 
 
+def _secure_token_file(token_path: Path) -> None:
+    """Set restrictive permissions on the token file (owner read/write only)."""
+    import stat
+    try:
+        if token_path.exists():
+            token_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0o600
+    except OSError as e:
+        logger.warning("Could not set token file permissions: %s", e)
+
+
 def get_client(force_reauth=False):
     """
     Load saved token or trigger browser OAuth flow.
@@ -36,6 +46,7 @@ def get_client(force_reauth=False):
     token_path = Path(TOKEN_PATH)
 
     if token_path.exists() and not force_reauth:
+        _secure_token_file(token_path)
         token_age = datetime.now() - datetime.fromtimestamp(token_path.stat().st_mtime)
         if token_age > timedelta(days=6):
             logger.warning(
@@ -54,6 +65,7 @@ def get_client(force_reauth=False):
         client = auth.client_from_manual_flow(
             APP_KEY, APP_SECRET, CALLBACK_URL, TOKEN_PATH
         )
+        _secure_token_file(token_path)
         logger.info("Schwab client authenticated via manual flow.")
         return client
     except Exception as e:
@@ -68,8 +80,8 @@ def test_connection(client) -> dict:
     try:
         response = client.get_account_numbers()
         accounts = response.json()
-        logger.info("Schwab connection verified. Accounts: %s", accounts)
-        return {"status": "ok", "accounts": accounts}
+        logger.info("Schwab connection verified. %d account(s) found.", len(accounts))
+        return {"status": "ok", "account_count": len(accounts)}
     except Exception as e:
         logger.error("Schwab connection test failed: %s", e)
         return {"status": "error", "message": str(e)}
@@ -98,7 +110,7 @@ def get_account_balance(client) -> dict:
         }
     except Exception as e:
         logger.error("Failed to get account balance: %s", e)
-        return {"error": str(e)}
+        return {"error": "Failed to retrieve account balance"}
 
 
 def get_positions(client) -> list:
@@ -125,8 +137,11 @@ def get_positions(client) -> list:
                 "quantity": pos.get("longQuantity", 0),
                 "cost_basis": pos.get("averagePrice", 0.0),
                 "market_value": pos.get("marketValue", 0.0),
-                "current_price": pos.get("currentDayProfitLoss", 0.0)
-                + pos.get("averagePrice", 0.0),
+                "current_price": (
+                    pos.get("marketValue", 0.0) / pos.get("longQuantity", 1)
+                    if pos.get("longQuantity", 0) > 0
+                    else pos.get("averagePrice", 0.0)
+                ),
                 "day_pnl": pos.get("currentDayProfitLoss", 0.0),
                 "total_pnl": pos.get("marketValue", 0.0)
                 - (pos.get("averagePrice", 0.0) * pos.get("longQuantity", 0)),
@@ -142,6 +157,16 @@ def place_order(client, account_hash, symbol, qty, side, dry_run=True) -> dict:
     Place a MARKET order. dry_run=True by default — NEVER change default.
     Logs every call regardless of dry_run status.
     """
+    import re as _re
+
+    # Input validation
+    if not symbol or not _re.match(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?(-[A-Z]{1,2})?$", symbol.upper()):
+        return {"status": "error", "message": "Invalid symbol"}
+    if not isinstance(qty, (int, float)) or qty <= 0 or qty > 100000:
+        return {"status": "error", "message": "Invalid quantity"}
+    if side.upper() not in ("BUY", "SELL"):
+        return {"status": "error", "message": "Invalid side"}
+
     order_info = {
         "timestamp": datetime.now().isoformat(),
         "symbol": symbol,
@@ -150,7 +175,7 @@ def place_order(client, account_hash, symbol, qty, side, dry_run=True) -> dict:
         "dry_run": dry_run,
     }
 
-    logger.info("Order request: %s", json.dumps(order_info))
+    logger.info("Order request: %s %s x %d (dry_run=%s)", side, symbol, qty, dry_run)
 
     if dry_run:
         logger.info("[DRY RUN] Would place %s order: %s x %d", side, symbol, qty)
@@ -176,7 +201,7 @@ def place_order(client, account_hash, symbol, qty, side, dry_run=True) -> dict:
         return {"status": "executed", "order": order_info, "response_code": response.status_code}
     except Exception as e:
         logger.error("Order failed: %s", e)
-        return {"status": "error", "message": str(e), "order": order_info}
+        return {"status": "error", "message": "Order execution failed", "order": order_info}
 
 
 def get_token_age_days() -> int:

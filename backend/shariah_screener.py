@@ -17,7 +17,7 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-CACHE_PATH = Path("data/compliance_cache.json")
+CACHE_PATH = Path(__file__).resolve().parent.parent / "data" / "compliance_cache.json"
 
 # Haram business categories — auto-exclude
 HARAM_INDUSTRIES = {

@@ -229,10 +229,26 @@ async def handle_approval_callback(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     await query.answer()
 
+    # Security: verify the callback comes from the authorized chat
+    if str(query.message.chat_id) != str(TELEGRAM_CHAT_ID):
+        logger.warning(
+            "Unauthorized callback from chat_id=%s (expected %s)",
+            query.message.chat_id, TELEGRAM_CHAT_ID,
+        )
+        await query.edit_message_text(text="Unauthorized.")
+        return
+
     data = query.data or ""
     parts = data.split(":", 1)
     action = parts[0]
     ticker = parts[1] if len(parts) > 1 else "UNKNOWN"
+
+    # Validate ticker from callback data
+    import re
+    if not re.match(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?(-[A-Z]{1,2})?$", ticker):
+        logger.warning("Invalid ticker in callback data: %s", ticker[:20])
+        await query.edit_message_text(text="Invalid ticker in callback.")
+        return
 
     if action == CALLBACK_APPROVE:
         await query.edit_message_text(
@@ -263,8 +279,7 @@ async def handle_approval_callback(update: Update, context: ContextTypes.DEFAULT
         await query.edit_message_text(
             text=(
                 f"\U0001f4cb <b>TRADE DETAILS</b> \u2014 {ticker}\n\n"
-                f"Full analysis details are available in the dashboard.\n"
-                f"Check: http://localhost:{os.getenv('DASHBOARD_PORT', '3000')}/trades/{ticker}"
+                f"Full analysis details are available in the dashboard."
             ),
             parse_mode="HTML",
         )

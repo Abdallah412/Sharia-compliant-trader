@@ -123,13 +123,22 @@ class AllocationPlan:
 
 def _gather_market_data(tickers: list) -> list:
     """Gather current price, fundamentals, and signals for each ticker."""
-    from backend.data_fetcher import (
-        get_current_price,
-        get_fundamentals,
-        get_price_history,
-        calculate_signal,
-    )
-    from backend.shariah_screener import ShariahScreener
+    try:
+        from backend.data_fetcher import (
+            get_current_price,
+            get_fundamentals,
+            get_price_history,
+            calculate_signal,
+        )
+        from backend.shariah_screener import ShariahScreener
+    except ImportError:
+        from data_fetcher import (
+            get_current_price,
+            get_fundamentals,
+            get_price_history,
+            calculate_signal,
+        )
+        from shariah_screener import ShariahScreener
 
     screener = ShariahScreener()
     market_data = []

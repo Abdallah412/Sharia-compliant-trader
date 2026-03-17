@@ -47,19 +47,36 @@ You MUST respond with ONLY a valid JSON object (no markdown, no explanation outs
 - auto_execute_eligible: boolean
 """
 
-client = anthropic.Anthropic()
+_client = None
+
+
+def _get_client():
+    """Lazily initialize the Anthropic client to avoid import-time crashes."""
+    global _client
+    if _client is None:
+        _client = anthropic.Anthropic()
+    return _client
 
 
 def call_agent(system_prompt: str, user_message: str) -> dict:
-    """Call the Anthropic API and parse the JSON response."""
+    """Call the Anthropic API and parse the JSON response safely."""
+    import re
+    client = _get_client()
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=1000,
         system=system_prompt,
         messages=[{"role": "user", "content": user_message}],
     )
-    text = response.content[0].text
-    return json.loads(text)
+    text = response.content[0].text.strip()
+    # Strip markdown fences if present
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    result = json.loads(text)
+    if not isinstance(result, dict):
+        raise ValueError("AI response is not a JSON object")
+    return result
 
 
 def run_pipeline(
@@ -78,9 +95,14 @@ def run_pipeline(
     This function focuses on the orchestration step — calling all three agents
     in sequence, then synthesizing with the orchestrator LLM.
     """
-    from backend.agents.sheikh_agent import evaluate as sheikh_evaluate
-    from backend.agents.finance_agent import evaluate as finance_evaluate
-    from backend.agents.accountant_agent import evaluate as accountant_evaluate
+    try:
+        from backend.agents.sheikh_agent import evaluate as sheikh_evaluate
+        from backend.agents.finance_agent import evaluate as finance_evaluate
+        from backend.agents.accountant_agent import evaluate as accountant_evaluate
+    except ImportError:
+        from agents.sheikh_agent import evaluate as sheikh_evaluate
+        from agents.finance_agent import evaluate as finance_evaluate
+        from agents.accountant_agent import evaluate as accountant_evaluate
 
     # ── Step 1: Sheikh Agent ─────────────────────────────────────────────
     logger.info("Pipeline step 1/3: Sheikh agent for %s", ticker)
@@ -205,6 +227,17 @@ def run_pipeline(
             "requires_user_approval": True,
             "auto_execute_eligible": False,
         }
+
+    # ── Validate LLM output — enforce allowed values ─────────────────────
+    VALID_DECISIONS = {"EXECUTE", "HOLD", "REJECT", "MANUAL_REVIEW"}
+    VALID_ACTIONS = {"BUY", "SELL", "HOLD"}
+    if result.get("final_decision") not in VALID_DECISIONS:
+        result["final_decision"] = "HOLD"
+    if result.get("action") not in VALID_ACTIONS:
+        result["action"] = "HOLD"
+    result["confidence"] = max(0, min(100, int(result.get("confidence", 0))))
+    result["ticker"] = ticker  # Always use our known-good ticker
+    result["quantity"] = quantity  # Always use our known-good quantity
 
     # ── Enforce auto_execute_eligible rules ──────────────────────────────
     auto_eligible = (

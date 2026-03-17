@@ -41,19 +41,38 @@ You MUST respond with ONLY a valid JSON object (no markdown, no explanation outs
 - recommendation: "PROCEED" | "REVIEW_MANUALLY" | "DO_NOT_INVEST"
 """
 
-client = anthropic.Anthropic()
+_client = None
+
+
+def _get_client():
+    """Lazily initialize the Anthropic client to avoid import-time crashes."""
+    global _client
+    if _client is None:
+        _client = anthropic.Anthropic()
+    return _client
 
 
 def call_agent(system_prompt: str, user_message: str) -> dict:
-    """Call the Anthropic API and parse the JSON response."""
+    """Call the Anthropic API and parse the JSON response safely."""
+    import re
+    client = _get_client()
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=1000,
         system=system_prompt,
         messages=[{"role": "user", "content": user_message}],
     )
-    text = response.content[0].text
-    return json.loads(text)
+    text = response.content[0].text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    result = json.loads(text)
+    if not isinstance(result, dict):
+        raise ValueError("AI response is not a JSON object")
+    # Validate verdict is in allowed set
+    if "verdict" in result and result["verdict"] not in ("HALAL", "DOUBTFUL", "HARAM"):
+        result["verdict"] = "DOUBTFUL"
+    return result
 
 
 def evaluate(
