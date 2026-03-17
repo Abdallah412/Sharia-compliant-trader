@@ -71,74 +71,142 @@ halal-trader/
 └── README.md
 ```
 
-## Quick Start
+## Quick Start (Free Local Testing)
+
+> **NOTE:** These setup steps are a work in progress and will be updated as
+> the project develops. If something doesn't work, check git log for recent
+> changes or open an issue.
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.11+
 - Node.js 18+
-- Charles Schwab developer account ([developer.schwab.com](https://developer.schwab.com))
-- Anthropic API key ([console.anthropic.com](https://console.anthropic.com))
-- Telegram bot token (via [@BotFather](https://t.me/BotFather))
-- NewsAPI key ([newsapi.org](https://newsapi.org))
+- Git
 
-### 1. Configure Environment
-
-```bash
-cp .env.example .env
-# Edit .env with your API keys — at minimum:
-#   SCHWAB_APP_KEY, SCHWAB_APP_SECRET
-#   ANTHROPIC_API_KEY
-#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-#   NEWS_API_KEY
-#   API_SECRET_KEY (generate: python -c "import secrets; print(secrets.token_urlsafe(32))")
-```
-
-### 2. Install Dependencies
+### 1. Install Dependencies
 
 ```bash
 # Backend
+cd backend
+python -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 # Frontend
-cd frontend
+cd ../frontend
 npm install
-cd ..
 ```
 
-### 3. Run
+### 2. Configure Environment
+
+Create `backend/.env` with the minimum config for local testing:
+
+```env
+# --- Free / no-key-needed ---
+DRY_RUN=true
+DATABASE_URL=sqlite+aiosqlite:///./test.db
+JWT_SECRET=change-me-before-production
+
+# --- Optional: enables AI agents (free trial credits available) ---
+# ANTHROPIC_API_KEY=sk-ant-...
+
+# --- Optional: enables live trading (skip for local testing) ---
+# SCHWAB_APP_KEY=
+# SCHWAB_APP_SECRET=
+
+# --- Optional: enables notifications ---
+# TELEGRAM_BOT_TOKEN=
+# TELEGRAM_CHAT_ID=
+
+# --- Optional: enables news sentiment ---
+# NEWS_API_KEY=
+
+# --- Optional: Shariah screening data enrichment ---
+# ZOYA_API_KEY=
+
+# --- Optional: payments ---
+# STRIPE_SECRET_KEY=
+```
+
+### 3. Test Core Modules (No API Keys Needed)
+
+These modules use free yfinance data and run entirely offline:
 
 ```bash
-# Terminal 1: Start API server
 cd backend
-python api_server.py
 
-# Terminal 2: Start frontend dashboard
-cd frontend
-npm run dev
-# Open http://localhost:3000
+# Shariah screener — screens SPUS, JPM, NVDA, AAPL, TSLA against all 5 AAOIFI screens
+python shariah_screener.py
 
-# Terminal 3: Run trading bot (paper mode)
-cd backend
-python trading_bot.py --dry-run
-
-# Production: Start scheduler (runs bot + API together)
-cd backend
-python scheduler.py
+# Zakat calculator — runs zakat + purification self-tests
+python zakat_calculator.py
 ```
 
-### 4. Portfolio Allocator
+### 4. Run the Frontend
+
+```bash
+cd frontend
+npm run dev
+# Open http://localhost:5173
+```
+
+The landing, pricing, and dashboard pages render without a backend. API-dependent
+features (screening, auth, portfolio) need the backend running.
+
+### 5. Run the Backend API
+
+```bash
+cd backend
+uvicorn main:app --reload --port 8000
+# Swagger UI: http://localhost:8000/docs
+```
+
+### 6. Run the Trading Bot (Paper Mode)
+
+```bash
+cd backend
+python trading_bot.py --dry-run
+```
+
+> Requires Schwab API credentials. Without them the bot exits at auth.
+> The screener and zakat modules work standalone (steps 3-4).
+
+### 7. Portfolio Allocator
 
 ```bash
 # CLI: Get allocation for $500 with moderate risk
 python backend/portfolio_allocator.py 500 moderate
 
-# API (requires API key):
+# API (requires backend running + auth):
 curl -X POST "http://localhost:8000/api/allocate?amount=500&risk_profile=moderate" \
      -H "X-API-Key: YOUR_API_SECRET_KEY"
-
-# Also available in the dashboard UI on the Portfolio page
 ```
+
+### What's Free vs. What Needs API Keys
+
+| Feature | Free | Needs API Key |
+|---------|------|---------------|
+| Shariah screener (5 AAOIFI screens) | yfinance (free) | Zoya API (optional, richer data) |
+| Zakat calculator | All free | -- |
+| Frontend dashboard | All free | -- |
+| Sheikh AI agent | -- | Anthropic (`ANTHROPIC_API_KEY`) |
+| Live / paper trading | -- | Schwab (`SCHWAB_APP_KEY`) |
+| News sentiment | -- | NewsAPI (`NEWS_API_KEY`) |
+| Notifications | -- | Telegram (`TELEGRAM_BOT_TOKEN`) |
+| Payments / subscriptions | -- | Stripe (`STRIPE_SECRET_KEY`) |
+
+### Full Production Setup
+
+For production deployment with all features enabled, you need:
+
+- Charles Schwab developer account ([developer.schwab.com](https://developer.schwab.com))
+- Anthropic API key ([console.anthropic.com](https://console.anthropic.com))
+- Telegram bot token (via [@BotFather](https://t.me/BotFather))
+- NewsAPI key ([newsapi.org](https://newsapi.org))
+- Stripe account for payments
+- A proper `JWT_SECRET` (generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"`)
+
+See `.env.example` for the full list of configuration variables.
 
 ## Architecture
 
@@ -171,8 +239,8 @@ curl -X POST "http://localhost:8000/api/allocate?amount=500&risk_profile=moderat
 
 ### Decision Hierarchy
 
-1. Sheikh verdict = HARAM -> **REJECT immediately**
-2. Sheikh verdict = DOUBTFUL -> **MANUAL_REVIEW** (user approval required)
+1. Sheikh verdict != HALAL -> **REJECT immediately** (both HARAM and DOUBTFUL are hard-gated from auto-execution)
+2. Sheikh agent failure (exception) -> **REJECT** (defaults to HARAM per *istishab al-asl*)
 3. Finance signal = SELL (confidence > 60%) -> **SELL** (after tax check)
 4. Finance signal = BUY + Tax = PROCEED -> **EXECUTE**
 5. Tax says WAIT (< 30 days to long-term) -> **HOLD**
@@ -180,19 +248,20 @@ curl -X POST "http://localhost:8000/api/allocate?amount=500&risk_profile=moderat
 
 ## Shariah Screening (AAOIFI Standards)
 
-The screener applies five financial screens based on AAOIFI Islamic finance standards. The 30% thresholds derive from the hadith of Sa'd ibn Abi Waqqas: *"One third, and one third is much"* (Al-Bukhari #5659).
+The screener applies five financial screens based on AAOIFI Shari'ah Standard No. 21. The 33.33% (one-third) thresholds derive from the hadith of Sa'd ibn Abi Waqqas: *"Ath-thuluth, wath-thuluthu kathir"* — "One third, and one third is much" (Sahih al-Bukhari #2742, Sahih Muslim #1628).
 
 | Screen | What It Tests | Threshold |
 |--------|---------------|-----------|
 | Primary Business Activity | Core revenue from halal activities only | 0% tolerance for haram core business |
 | Secondary Activity | Incidental haram revenue (e.g., hotel minibars) | < 5% of total revenue |
-| Interest-Bearing Debt | Total interest debt / market cap | < 30% of market cap |
-| Interest-Bearing Deposits | Cash in interest accounts / total equity | < 30% of equity |
-| Purification (Tazkiya) | % of dividends from haram income to donate | Calculate exact amount |
+| Interest-Bearing Debt | Total interest debt / **market cap** | < 33.33% of market cap |
+| Interest-Bearing Deposits | Cash in interest accounts / **market cap** | < 33.33% of market cap |
+| Receivables | Net receivables / **market cap** | < 33.33% of market cap |
+| Purification (Tazkiya) | % of dividends from haram **interest income** to donate | Calculated as fraction (0.0–1.0) |
 
 ### Auto-Excluded Industries
 
-Conventional banking/insurance, alcohol, gambling/casinos, tobacco, pornography, pork products.
+Conventional banking/insurance/credit/lending, alcohol, gambling/casinos, tobacco, pornography, pork products, weapons/arms/ammunition, cannabis/marijuana, riba instruments (T-bills, bonds, money markets, fixed income).
 
 ### Pre-Screened Halal Universe
 
