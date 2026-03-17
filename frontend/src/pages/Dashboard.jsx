@@ -17,6 +17,7 @@ import HoldingsTable from '../components/HoldingsTable';
 import AgentDecisionCard from '../components/AgentDecisionCard';
 import { usePortfolio } from '../hooks/usePortfolio';
 import { formatCurrency, formatPct, pnlColor } from '../utils/formatCurrency';
+import Disclaimer from '../components/Disclaimer';
 
 // ── Page transition wrapper ──────────────────────────────────────────
 const pageVariants = {
@@ -258,6 +259,7 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+      <Disclaimer />
     </motion.div>
   );
 }

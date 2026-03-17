@@ -5,21 +5,22 @@ System prompts use cache_control for 90% input cost savings.
 """
 
 import logging
+import os
+
 import anthropic
 
-from config import ANTHROPIC_API_KEY
 from utils.json_parser import safe_parse_json
 
 logger = logging.getLogger(__name__)
 
-client = None
+_client = None
 
 
 def _get_client() -> anthropic.Anthropic:
-    global client
-    if client is None:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    return client
+    global _client
+    if _client is None:
+        _client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+    return _client
 
 
 def call_agent(
@@ -27,6 +28,8 @@ def call_agent(
     user_message: str,
     model: str = "claude-haiku-4-5-20251001",
     max_tokens: int = 800,
+    user_id: str | None = None,
+    feature: str = "unknown",
 ) -> dict:
     """
     Single reusable function for all agent calls.
@@ -39,7 +42,7 @@ def call_agent(
             {
                 "type": "text",
                 "text": system_prompt,
-                "cache_control": {"type": "ephemeral"},
+                "cache_control": {"type": "ephemeral"},  # THE CRITICAL LINE
             }
         ],
         messages=[{"role": "user", "content": user_message}],
@@ -56,9 +59,26 @@ def call_agent(
         "cache_hit": getattr(usage, "cache_read_input_tokens", 0) > 0,
     }
 
+    # Log token usage to database if user_id provided
+    if user_id:
+        try:
+            from utils.token_tracker import log_token_usage_sync
+            log_token_usage_sync(
+                user_id=user_id,
+                feature=feature,
+                model=model,
+                input_tokens=result["tokens_in"],
+                output_tokens=result["tokens_out"],
+                cache_creation_tokens=result["cache_creation_tokens"],
+                cache_read_tokens=result["cache_read_tokens"],
+            )
+        except Exception as e:
+            logger.warning("Token usage logging failed: %s", e)
+
     logger.info(
-        "Agent call: model=%s in=%d out=%d cache_hit=%s",
-        model, result["tokens_in"], result["tokens_out"], result["cache_hit"],
+        "Agent call: model=%s feature=%s user=%s in=%d out=%d cache_hit=%s",
+        model, feature, user_id or "anonymous",
+        result["tokens_in"], result["tokens_out"], result["cache_hit"],
     )
     return result
 
@@ -68,8 +88,14 @@ def call_agent_json(
     user_message: str,
     model: str = "claude-haiku-4-5-20251001",
     max_tokens: int = 800,
+    user_id: str | None = None,
+    feature: str = "unknown",
 ) -> tuple[dict, dict]:
     """Call agent and parse JSON response. Returns (parsed_json, raw_metadata)."""
-    raw = call_agent(system_prompt, user_message, model=model, max_tokens=max_tokens)
+    raw = call_agent(
+        system_prompt, user_message,
+        model=model, max_tokens=max_tokens,
+        user_id=user_id, feature=feature,
+    )
     parsed = safe_parse_json(raw["content"])
     return parsed, raw

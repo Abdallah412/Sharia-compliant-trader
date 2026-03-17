@@ -1,58 +1,48 @@
 import { useState, useEffect, useCallback, createContext, useContext } from 'react';
 
 const AuthContext = createContext(null);
-
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState(() => localStorage.getItem('access_token'));
+  const [token, setToken] = useState(null);
 
   const authFetch = useCallback(async (url, options = {}) => {
-    const t = localStorage.getItem('access_token');
     const res = await fetch(`${API_BASE}${url}`, {
       ...options,
+      credentials: 'include', // send httpOnly cookies
       headers: {
         'Content-Type': 'application/json',
-        ...(t ? { Authorization: `Bearer ${t}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...options.headers,
       },
     });
-    if (res.status === 401) {
-      // Try refresh
+    if (res.status === 401 && token) {
       const refreshed = await refreshToken();
-      if (!refreshed) {
-        logout();
-        throw new Error('Session expired');
-      }
-      // Retry with new token
-      const newT = localStorage.getItem('access_token');
+      if (!refreshed) { logout(); throw new Error('Session expired'); }
       return fetch(`${API_BASE}${url}`, {
         ...options,
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${newT}`,
+          Authorization: `Bearer ${token}`,
           ...options.headers,
         },
       });
     }
     return res;
-  }, []);
+  }, [token]);
 
   const refreshToken = async () => {
-    const rt = localStorage.getItem('refresh_token');
-    if (!rt) return false;
     try {
       const res = await fetch(`${API_BASE}/auth/refresh`, {
         method: 'POST',
+        credentials: 'include', // refresh token lives in httpOnly cookie
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: rt }),
       });
       if (!res.ok) return false;
       const data = await res.json();
-      localStorage.setItem('access_token', data.access_token);
-      localStorage.setItem('refresh_token', data.refresh_token);
       setToken(data.access_token);
       return true;
     } catch {
@@ -60,22 +50,18 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const fetchUser = useCallback(async () => {
-    const t = localStorage.getItem('access_token');
-    if (!t) {
-      setLoading(false);
-      return;
-    }
+  const fetchUser = useCallback(async (accessToken) => {
+    const t = accessToken || token;
+    if (!t) { setLoading(false); return; }
     try {
       const res = await fetch(`${API_BASE}/auth/me`, {
         headers: { Authorization: `Bearer ${t}` },
+        credentials: 'include',
       });
       if (res.ok) {
-        const data = await res.json();
-        setUser(data);
+        setUser(await res.json());
       } else {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
+        setToken(null);
         setUser(null);
       }
     } catch {
@@ -83,13 +69,28 @@ export function AuthProvider({ children }) {
     } finally {
       setLoading(false);
     }
+  }, [token]);
+
+  // On mount: try to refresh from httpOnly cookie
+  useEffect(() => {
+    (async () => {
+      const refreshed = await refreshToken();
+      if (refreshed) {
+        // Token was set in state by refreshToken
+      }
+      setLoading(false);
+    })();
   }, []);
 
-  useEffect(() => { fetchUser(); }, [fetchUser]);
+  // When token changes, fetch user
+  useEffect(() => {
+    if (token) fetchUser(token);
+  }, [token, fetchUser]);
 
   const login = async (email, password) => {
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: 'POST',
+      credentials: 'include', // receives httpOnly cookie
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
@@ -98,15 +99,13 @@ export function AuthProvider({ children }) {
       throw new Error(err.detail || 'Login failed');
     }
     const data = await res.json();
-    localStorage.setItem('access_token', data.access_token);
-    localStorage.setItem('refresh_token', data.refresh_token);
     setToken(data.access_token);
-    await fetchUser();
   };
 
   const register = async (email, password, fullName) => {
     const res = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, full_name: fullName }),
     });
@@ -115,15 +114,14 @@ export function AuthProvider({ children }) {
       throw new Error(err.detail || 'Registration failed');
     }
     const data = await res.json();
-    localStorage.setItem('access_token', data.access_token);
-    localStorage.setItem('refresh_token', data.refresh_token);
     setToken(data.access_token);
-    await fetchUser();
   };
 
-  const logout = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
+  const logout = async () => {
+    await fetch(`${API_BASE}/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    }).catch(() => {});
     setToken(null);
     setUser(null);
   };

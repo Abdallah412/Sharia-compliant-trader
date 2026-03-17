@@ -20,6 +20,7 @@ import {
 import SentimentBar from '../components/SentimentBar';
 import { usePortfolio } from '../hooks/usePortfolio';
 import { formatCurrency } from '../utils/formatCurrency';
+import Disclaimer from '../components/Disclaimer';
 
 const FALLBACK_TICKERS = ['NVDA', 'MSFT', 'AAPL', 'AMZN', 'GOOGL'];
 const TIME_RANGES = ['1W', '1M', '3M', '6M', '1Y'];
@@ -527,6 +528,7 @@ export default function Charts() {
       {chartData.length > 0 && !loading && (
         <SignalPanel data={chartData} sentimentScore={sentimentScore} />
       )}
+      <Disclaimer />
     </div>
   );
 }

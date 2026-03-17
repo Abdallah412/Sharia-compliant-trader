@@ -13,6 +13,7 @@ import Charts from './pages/Charts'
 import TaxCenter from './pages/TaxCenter'
 import Compliance from './pages/Compliance'
 import Settings from './pages/Settings'
+import TraderInbox from './pages/TraderInbox'
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
@@ -52,6 +53,7 @@ export default function App() {
               <Route path="/tax" element={<TaxCenter />} />
               <Route path="/compliance" element={<Compliance />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/managed" element={<TraderInbox />} />
             </Routes>
           </Layout>
         </ProtectedRoute>

@@ -10,6 +10,7 @@ import {
   Plus,
 } from 'lucide-react';
 import ComplianceBadge from '../components/ComplianceBadge';
+import Disclaimer from '../components/Disclaimer';
 
 const SCREEN_NAMES = [
   'Business Activity Screening',
@@ -298,6 +299,7 @@ export default function Screener() {
           </motion.div>
         )}
       </AnimatePresence>
+      <Disclaimer />
     </div>
   );
 }

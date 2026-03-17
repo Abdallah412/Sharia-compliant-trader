@@ -28,6 +28,7 @@ export default {
         'border-light': '#2A4A6A',
       },
       fontFamily: {
+        heading: ["'Crimson Pro'", 'serif'],
         display: ["'Crimson Pro'", 'serif'],
         mono: ["'IBM Plex Mono'", 'monospace'],
       },

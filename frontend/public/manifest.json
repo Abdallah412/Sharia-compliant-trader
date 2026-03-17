@@ -1,0 +1,17 @@
+{
+  "name": "Halal Trader",
+  "short_name": "HalalTrader",
+  "description": "AI-powered Shariah-compliant automated investment platform",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080E14",
+  "theme_color": "#0B2545",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

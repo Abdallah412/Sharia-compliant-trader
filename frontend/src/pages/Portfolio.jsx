@@ -26,6 +26,7 @@ import AllocatorPanel from '../components/AllocatorPanel';
 import { usePortfolio } from '../hooks/usePortfolio';
 import { useApi } from '../hooks/useApi';
 import { formatCurrency, formatPct, pnlColor } from '../utils/formatCurrency';
+import Disclaimer from '../components/Disclaimer';
 
 // ── Page transition ──────────────────────────────────────────────────
 const pageVariants = {
@@ -320,6 +321,7 @@ export default function Portfolio() {
           </motion.div>
         )}
       </AnimatePresence>
+      <Disclaimer />
     </motion.div>
   );
 }

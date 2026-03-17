@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import KPICard from '../components/KPICard';
 import { formatCurrency, formatPct } from '../utils/formatCurrency';
+import Disclaimer from '../components/Disclaimer';
 
 const pageVariants = {
   initial: { opacity: 0, y: 20 },
@@ -337,6 +338,7 @@ export default function TaxCenter() {
           </div>
         </div>
       </motion.div>
+      <Disclaimer />
     </motion.div>
   );
 }
