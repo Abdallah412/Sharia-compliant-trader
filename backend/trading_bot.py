@@ -643,15 +643,19 @@ def run_daily_cycle() -> dict:
                 )
             except Exception as exc:
                 logger.error("Sheikh agent failed for %s: %s", ticker, exc)
-                sheikh_result = {"verdict": "DOUBTFUL", "recommendation": "REVIEW_MANUALLY"}
+                # Istishab al-asl: unknown = impermissible until proven halal
+                sheikh_result = {"verdict": "HARAM", "recommendation": "DO_NOT_INVEST",
+                                 "primary_reason": "Sheikh agent unavailable — defaulting to HARAM per istishab al-asl"}
 
-            sheikh_verdict = sheikh_result.get("verdict", "DOUBTFUL")
+            sheikh_verdict = sheikh_result.get("verdict", "HARAM")
 
-            if sheikh_verdict == "HARAM":
-                logger.info("Skipping %s — Sheikh verdict HARAM", ticker)
+            # Hard gate: only HALAL stocks may proceed to auto-execution.
+            # DOUBTFUL requires manual review — never auto-trade.
+            if sheikh_verdict != "HALAL":
+                logger.info("Skipping %s — Sheikh verdict %s (only HALAL may proceed)", ticker, sheikh_verdict)
                 log_decision({
                     "ticker": ticker, "signal": signal,
-                    "action": "SKIP", "reason": "sheikh_haram",
+                    "action": "SKIP", "reason": f"sheikh_{sheikh_verdict.lower()}",
                     "sheikh_result": sheikh_result,
                 })
                 continue
@@ -708,13 +712,7 @@ def run_daily_cycle() -> dict:
 
             # --- BUY rules (all must be true) ---
             if final_action == "BUY" and ticker not in held_tickers:
-                # Golden cross already confirmed by signal == "BUY"
-                if sheikh_verdict != "HALAL":
-                    log_decision({
-                        "ticker": ticker, "signal": signal,
-                        "action": "SKIP", "reason": "sheikh_not_halal",
-                    })
-                    continue
+                # Sheikh gate already enforced above — only HALAL reaches here
                 if news_score <= -20:
                     log_decision({
                         "ticker": ticker, "signal": signal,

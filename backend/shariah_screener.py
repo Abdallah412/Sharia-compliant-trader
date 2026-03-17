@@ -21,16 +21,45 @@ CACHE_PATH = Path(__file__).resolve().parent.parent / "data" / "compliance_cache
 
 # Haram business categories — auto-exclude
 HARAM_INDUSTRIES = {
+    # Conventional finance (riba)
     "banks—diversified", "banks—regional", "insurance—diversified",
     "insurance—life", "insurance—property & casualty", "insurance—reinsurance",
-    "insurance—specialty", "gambling", "casinos & gaming",
-    "tobacco", "alcoholic beverages", "brewers", "wineries & distilleries",
+    "insurance—specialty", "credit services", "mortgage finance",
+    "consumer lending", "financial conglomerates",
+    # Gambling
+    "gambling", "casinos & gaming",
+    # Alcohol
+    "alcoholic beverages", "brewers", "wineries & distilleries",
+    # Tobacco
+    "tobacco",
+    # Adult content
     "adult entertainment",
+    # Weapons (offensive — per AAOIFI SS 21)
+    "weapons", "arms", "ammunition",
+    # Cannabis (intoxicant — haram by consensus, Quran 5:90)
+    "cannabis", "marijuana",
 }
 
 HARAM_KEYWORDS = {
-    "banking", "insurance", "casino", "gambling", "tobacco", "alcohol",
-    "brewery", "distillery", "winery", "pork", "adult entertainment",
+    # Finance / riba
+    "banking", "insurance", "mortgage", "lending", "credit",
+    "interest", "consumer finance",
+    # Gambling
+    "casino", "gambling",
+    # Alcohol
+    "alcohol", "brewery", "distillery", "winery", "liquor", "nightclub",
+    # Tobacco
+    "tobacco",
+    # Pork
+    "pork",
+    # Adult content
+    "adult entertainment",
+    # Weapons
+    "weapons", "arms", "ammunition",
+    # Cannabis / intoxicants
+    "cannabis", "marijuana",
+    # Riba instruments (T-bills, bonds, money markets)
+    "treasury", "t-bill", "bond fund", "money market", "fixed income",
 }
 
 # Known non-compliant — never trade
@@ -41,7 +70,7 @@ BLACKLIST = {
 
 # Doubtful categories requiring Sheikh Agent review
 DOUBTFUL_INDUSTRIES = {
-    "aerospace & defense", "weapons", "entertainment", "media",
+    "aerospace & defense", "entertainment", "media",
     "advertising", "hotels", "resorts & cruise lines",
 }
 
@@ -145,73 +174,79 @@ class ShariahScreener:
                     "Secondary activity screen: manual review recommended for revenue breakdown"
                 )
 
-            # Screen 3: Interest-bearing debt / market cap < 30%
+            # Screen 3: Interest-bearing debt / market cap < 33.33% (AAOIFI)
+            # One-third threshold per hadith of Sa'd ibn Abi Waqqas (Bukhari #2742)
             market_cap = info.get("marketCap", 0)
             total_debt = info.get("totalDebt", 0)
 
             if market_cap and market_cap > 0:
                 result.debt_ratio = round(total_debt / market_cap, 4) if total_debt else 0.0
 
-                if result.debt_ratio > 0.33:
+                if result.debt_ratio > 0.3333:
                     result.compliant = False
                     result.fail_reasons.append(
-                        f"Debt ratio {result.debt_ratio:.1%} exceeds 33% threshold"
+                        f"Debt ratio {result.debt_ratio:.1%} exceeds AAOIFI 33.33% threshold (one-third)"
                     )
                 elif result.debt_ratio > 0.30:
-                    result.compliant = False
-                    result.fail_reasons.append(
-                        f"Debt ratio {result.debt_ratio:.1%} exceeds 30% AAOIFI threshold"
-                    )
-                elif result.debt_ratio > 0.28:
                     result.warnings.append(
-                        f"Debt ratio {result.debt_ratio:.1%} is borderline (28-30% range)"
+                        f"Debt ratio {result.debt_ratio:.1%} is borderline (30-33% range)"
                     )
             else:
                 result.warnings.append("Market cap unavailable — cannot compute debt ratio")
 
-            # Screen 4: Interest-bearing deposits / total equity < 30%
+            # Screen 4: Interest-bearing deposits / market cap < 33.33% (AAOIFI)
+            # Per AAOIFI SS 21, denominator is market cap (not equity)
             cash = info.get("totalCash", 0) or 0
             short_investments = info.get("shortTermInvestments", 0) or 0
-            total_equity = info.get("totalStockholderEquity") or info.get("bookValue", 0)
 
-            if total_equity and total_equity > 0:
+            if market_cap and market_cap > 0:
                 cash_deposits = cash + short_investments
-                result.cash_ratio = round(cash_deposits / total_equity, 4)
+                result.cash_ratio = round(cash_deposits / market_cap, 4)
 
-                if result.cash_ratio > 0.33:
+                if result.cash_ratio > 0.3333:
                     result.compliant = False
                     result.fail_reasons.append(
-                        f"Cash/deposit ratio {result.cash_ratio:.1%} exceeds 33% of equity"
+                        f"Cash/deposit ratio {result.cash_ratio:.1%} exceeds AAOIFI 33.33% of market cap"
                     )
                 elif result.cash_ratio > 0.30:
-                    result.compliant = False
-                    result.fail_reasons.append(
-                        f"Cash/deposit ratio {result.cash_ratio:.1%} exceeds 30% AAOIFI threshold"
-                    )
-                elif result.cash_ratio > 0.28:
                     result.warnings.append(
-                        f"Cash/deposit ratio {result.cash_ratio:.1%} is borderline"
+                        f"Cash/deposit ratio {result.cash_ratio:.1%} is borderline (30-33% range)"
                     )
             else:
-                result.warnings.append("Equity data unavailable — cannot compute cash ratio")
+                result.warnings.append("Market cap unavailable — cannot compute cash/deposit ratio")
 
-            # Screen 5: Receivables ratio
+            # Screen 5: Receivables / market cap < 33.33% (AAOIFI)
+            # Unenforced before — now a hard fail per bay' al-dayn prohibition
             receivables = info.get("netReceivables", 0) or 0
-            total_assets = info.get("totalAssets", 0) or 0
 
-            if total_assets and total_assets > 0:
-                result.receivables_ratio = round(receivables / total_assets, 4)
+            if market_cap and market_cap > 0:
+                result.receivables_ratio = round(receivables / market_cap, 4)
+
+                if result.receivables_ratio > 0.3333:
+                    result.compliant = False
+                    result.fail_reasons.append(
+                        f"Receivables ratio {result.receivables_ratio:.1%} exceeds AAOIFI 33.33% of market cap"
+                    )
+                elif result.receivables_ratio > 0.30:
+                    result.warnings.append(
+                        f"Receivables ratio {result.receivables_ratio:.1%} is borderline (30-33% range)"
+                    )
             else:
                 result.receivables_ratio = None
 
             # Purification calculation
-            # Estimate haram income portion from interest income / total revenue
-            interest_expense = abs(info.get("interestExpense", 0) or 0)
+            # Use interest INCOME (haram earnings), not interest expense (cost of debt).
+            # Stored as a fraction (0.0–1.0) for consistency with zakat_calculator.
+            interest_income = abs(info.get("interestIncome", 0) or 0)
+            # Fallback: if interestIncome unavailable, estimate from cash ratio
+            if interest_income == 0 and result.cash_ratio and result.cash_ratio > 0:
+                # Conservative proxy: assume cash earns ~4% interest
+                interest_income = (info.get("totalCash", 0) or 0) * 0.04
             total_revenue = info.get("totalRevenue", 0) or 0
 
-            if total_revenue > 0 and interest_expense > 0:
+            if total_revenue > 0 and interest_income > 0:
                 result.purification_pct = round(
-                    min(interest_expense / total_revenue * 100, 100), 2
+                    min(interest_income / total_revenue, 1.0), 4
                 )
             else:
                 result.purification_pct = 0.0
@@ -254,7 +289,8 @@ class ShariahScreener:
     def calculate_purification(self, ticker: str, dividend_amount: float) -> float:
         """Calculate the amount to donate from dividends for purification."""
         result = self.screen(ticker)
-        donate = round(dividend_amount * result.purification_pct / 100, 2)
+        # purification_pct is already a fraction (0.0–1.0)
+        donate = round(dividend_amount * result.purification_pct, 2)
         return donate
 
 

@@ -26,7 +26,7 @@ async def screen_ticker(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """On-demand Shariah screen. Rate-limited by tier."""
+    """On-demand Shariah screen. Rate-limited by tier. Cache: 30 days."""
     ticker = ticker.upper().strip()
     if not ticker or len(ticker) > 10:
         raise HTTPException(status_code=400, detail="Invalid ticker")
@@ -73,7 +73,7 @@ async def screen_ticker(
         verdict=report["verdict"],
         full_report=report,
         source="yfinance",
-        expires_at=datetime.now(timezone.utc) + timedelta(days=90),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
     ))
     await db.commit()
 

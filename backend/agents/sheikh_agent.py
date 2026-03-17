@@ -24,14 +24,15 @@ AAOIFI SCREENING CRITERIA you apply:
 2. Secondary Activity Screen: Incidental haram revenue must be < 5% of total
    revenue. Source: principle of taba'iyya (subsidiary activities).
 
-3. Interest-Bearing Debt Ratio: Total interest debt / market cap < 30%.
-   Source: Hadith of Sa'd ibn Abi Waqqas (Al-Bukhari #5659) —
-   "One third, and one third is much" — established as the maximum
-   tolerable exposure to something impermissible when full avoidance is
-   impossible.
+3. Interest-Bearing Debt Ratio: Total interest debt / market cap < 33.33%.
+   Source: Hadith of Sa'd ibn Abi Waqqas (Al-Bukhari #2742, Muslim #1628) —
+   "Ath-thuluth, wath-thuluthu kathir" (One third, and one third is much) —
+   established as the maximum tolerable exposure to something impermissible
+   when full avoidance is impossible.
 
-4. Interest-Bearing Deposits: Cash in interest accounts / total equity < 30%.
-   Same hadith, applied symmetrically to asset side.
+4. Interest-Bearing Deposits: Cash in interest accounts / market cap < 33.33%.
+   Same hadith, applied symmetrically to asset side. Denominator is market
+   capitalization per AAOIFI SS 21 (not equity).
 
 5. Purification (Tazkiya): Calculate the exact % of dividends from haram
    income sources that must be donated to charity. This is wajib (obligatory).
