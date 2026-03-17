@@ -1,0 +1,13 @@
+schwab-py
+yfinance
+pandas
+numpy
+fastapi
+uvicorn
+apscheduler
+python-dotenv
+requests
+anthropic
+python-telegram-bot>=20.0
+newsapi-python
+pytest
