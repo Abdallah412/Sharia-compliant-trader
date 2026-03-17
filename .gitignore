@@ -1,6 +1,7 @@
 # Environment and secrets
 .env
 schwab_token.json
+*.pem
 
 # Data files (contain personal trading data)
 data/
@@ -16,11 +17,16 @@ build/
 .venv/
 venv/
 env/
+.pytest_cache/
 
 # Node/Frontend
 frontend/node_modules/
 frontend/dist/
 frontend/.env
+
+# Capacitor native builds
+frontend/ios/
+frontend/android/
 
 # IDE
 .vscode/

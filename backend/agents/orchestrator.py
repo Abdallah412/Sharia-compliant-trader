@@ -1,280 +1,146 @@
 """
 Orchestrator Agent — Senior portfolio manager.
-Synthesizes Sheikh, Finance, and Accountant agent outputs into a final trading decision.
+Synthesizes Sheikh, Finance, and Accountant outputs into a final decision.
+Uses Sonnet for judgment/synthesis capability.
 """
 
-import anthropic
 import json
 import logging
-import os
-import sys
-from dotenv import load_dotenv
 
-load_dotenv()
+from agents.base_agent import call_agent_json
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("orchestrator")
 
-AUTO_EXECUTE_MAX_USD = float(os.getenv("AUTO_EXECUTE_MAX_USD", "5000"))
+SYSTEM_PROMPT = """\
+You are a senior portfolio manager synthesizing three specialist advisors:
+a Shariah scholar, a quantitative analyst, and a tax accountant.
 
-SYSTEM_PROMPT = """You are a senior portfolio manager responsible for synthesizing the recommendations \
-of three specialist agents — a Shariah scholar (Sheikh), a quantitative analyst (Finance), and a tax \
-accountant — into a single, final trading decision.
+DECISION HIERARCHY (strict priority order):
+1. Sheikh = HARAM → REJECT immediately. No override. Log and alert user.
+2. Sheikh = DOUBTFUL → flag for MANUAL_REVIEW. Do not auto-execute.
+3. Finance signal = SELL with confidence > 60 + Tax = PROCEED → SELL
+4. Finance signal = BUY + Sheikh = HALAL + Tax = PROCEED → EXECUTE
+5. Tax says WAIT_FOR_LONGTERM + days_to_long_term < 30 → HOLD, re-check in X days
+6. All other cases → HOLD
 
-You MUST follow this strict decision hierarchy:
-1. If the Sheikh verdict is HARAM → REJECT the trade immediately, regardless of other signals.
-2. If the Sheikh verdict is DOUBTFUL → flag for MANUAL_REVIEW, regardless of other signals.
-3. If the Finance signal is SELL with confidence > 60 → SELL (after considering tax implications).
-4. If the Finance signal is BUY AND the Tax verdict is PROCEED → EXECUTE the trade.
-5. If the Tax verdict is WAIT_FOR_LONGTERM AND days_to_long_term < 30 → HOLD.
-6. Default → HOLD.
+AUTO-EXECUTE CRITERIA (only when ALL of these are true):
+- Sheikh verdict = HALAL with confidence ≥ 90
+- Finance signal confidence ≥ 75
+- Tax verdict = PROCEED
+- Trade size < user's AUTO_EXECUTE_MAX_USD setting
+- User's auto_execute setting = True
 
-You MUST respond with ONLY a valid JSON object (no markdown, no explanation outside JSON) with these fields:
-- final_decision: "EXECUTE" | "HOLD" | "REJECT" | "MANUAL_REVIEW"
-- action: "BUY" | "SELL" | "HOLD"
-- ticker: string
-- quantity: integer
-- estimated_price: float
-- confidence: integer 0-100
-- primary_reason: string explaining the decisive factor
-- sheikh_summary: string — one-line summary of Sheikh verdict
-- finance_summary: string — one-line summary of Finance signal
-- accountant_summary: string — one-line summary of Tax verdict
-- tax_warning: string — any tax concern (empty string if none)
-- shariah_warning: string — any Shariah concern (empty string if none)
-- notification_message: string — human-readable notification for the user
-- requires_user_approval: boolean
-- auto_execute_eligible: boolean
+Respond ONLY with valid JSON:
+{
+  "final_decision": "EXECUTE" | "HOLD" | "REJECT" | "MANUAL_REVIEW",
+  "action": "BUY" | "SELL" | "HOLD",
+  "ticker": "",
+  "suggested_quantity": 0,
+  "confidence": 0-100,
+  "primary_reason": "one paragraph synthesizing all three agents",
+  "sheikh_summary": "one sentence",
+  "finance_summary": "one sentence",
+  "accountant_summary": "one sentence",
+  "tax_warning": "",
+  "shariah_warning": "",
+  "requires_user_approval": true,
+  "auto_execute_eligible": false,
+  "notification_message": "Exact Telegram/push message to send user"
+}
 """
 
-_client = None
+MODEL = "claude-sonnet-4-6"
 
 
-def _get_client():
-    """Lazily initialize the Anthropic client to avoid import-time crashes."""
-    global _client
-    if _client is None:
-        _client = anthropic.Anthropic()
-    return _client
-
-
-def call_agent(system_prompt: str, user_message: str) -> dict:
-    """Call the Anthropic API and parse the JSON response safely."""
-    import re
-    client = _get_client()
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1000,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}],
-    )
-    text = response.content[0].text.strip()
-    # Strip markdown fences if present
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    result = json.loads(text)
-    if not isinstance(result, dict):
-        raise ValueError("AI response is not a JSON object")
-    return result
-
-
-def run_pipeline(
+def orchestrate(
     ticker: str,
-    action: str,
-    quantity: int,
-    price: float,
-    sheikh_input: dict | None = None,
-    finance_input: dict | None = None,
-    accountant_input: dict | None = None,
+    sheikh_result: dict,
+    finance_result: dict,
+    accountant_result: dict,
+    user: dict | None = None,
 ) -> dict:
-    """
-    Run the full three-agent pipeline and return the orchestrated decision.
+    """Synthesize all three agent results into a final decision."""
+    user = user or {}
 
-    If pre-computed agent inputs are not provided, callers should supply them.
-    This function focuses on the orchestration step — calling all three agents
-    in sequence, then synthesizing with the orchestrator LLM.
-    """
-    try:
-        from backend.agents.sheikh_agent import evaluate as sheikh_evaluate
-        from backend.agents.finance_agent import evaluate as finance_evaluate
-        from backend.agents.accountant_agent import evaluate as accountant_evaluate
-    except ImportError:
-        from agents.sheikh_agent import evaluate as sheikh_evaluate
-        from agents.finance_agent import evaluate as finance_evaluate
-        from agents.accountant_agent import evaluate as accountant_evaluate
+    user_message = f"""\
+Make the final investment decision for {ticker}.
 
-    # ── Step 1: Sheikh Agent ─────────────────────────────────────────────
-    logger.info("Pipeline step 1/3: Sheikh agent for %s", ticker)
-    if sheikh_input is not None:
-        sheikh_result = sheikh_evaluate(**sheikh_input)
-    else:
-        logger.warning("No sheikh_input provided; using minimal defaults for %s", ticker)
-        sheikh_result = sheikh_evaluate(
-            ticker=ticker, sector="Unknown", industry="Unknown",
-            debt_ratio=0.0, cash_ratio=0.0,
-            revenue_total=0.0, revenue_impermissible=0.0,
-            dividend_yield=0.0, scholarly_flags=[],
-        )
+SHEIKH AGENT RESULT:
+{json.dumps(sheikh_result, indent=2, default=str)}
 
-    # Short-circuit: HARAM → REJECT immediately
+FINANCE AGENT RESULT:
+{json.dumps(finance_result, indent=2, default=str)}
+
+ACCOUNTANT AGENT RESULT:
+{json.dumps(accountant_result, indent=2, default=str)}
+
+USER SETTINGS:
+Tier: {user.get('tier', 'pro')}
+Auto-execute enabled: {user.get('auto_execute', False)}
+Auto-execute max USD: ${user.get('auto_execute_max_usd', 50)}
+Dry run mode: {user.get('dry_run', True)}
+"""
+
+    parsed, meta = call_agent_json(SYSTEM_PROMPT, user_message, model=MODEL, max_tokens=800)
+
+    # Validate
+    if parsed.get("final_decision") not in ("EXECUTE", "HOLD", "REJECT", "MANUAL_REVIEW"):
+        parsed["final_decision"] = "HOLD"
+    if parsed.get("action") not in ("BUY", "SELL", "HOLD"):
+        parsed["action"] = "HOLD"
+    if "confidence" in parsed:
+        parsed["confidence"] = max(0, min(100, int(parsed["confidence"])))
+
+    parsed["ticker"] = ticker
+    parsed["_meta"] = meta
+    return parsed
+
+
+def run_full_pipeline(
+    ticker: str,
+    sheikh_kwargs: dict,
+    finance_kwargs: dict,
+    accountant_kwargs: dict,
+    user: dict | None = None,
+) -> dict:
+    """Run all four agents in sequence: Sheikh → (gate) → Finance → Accountant → Orchestrator."""
+    from agents.sheikh_agent import evaluate as sheikh_evaluate
+    from agents.finance_agent import evaluate as finance_evaluate
+    from agents.accountant_agent import evaluate as accountant_evaluate
+
+    # Step 1: Sheikh
+    logger.info("Pipeline 1/4: Sheikh agent for %s", ticker)
+    sheikh_result = sheikh_evaluate(**sheikh_kwargs)
+
+    # Gate: HARAM → REJECT immediately
     if sheikh_result.get("verdict") == "HARAM":
-        logger.info("Sheikh verdict HARAM — pipeline halted for %s", ticker)
+        logger.info("Sheikh HARAM — pipeline halted for %s", ticker)
         return {
             "final_decision": "REJECT",
             "action": "HOLD",
             "ticker": ticker,
-            "quantity": quantity,
-            "estimated_price": price,
             "confidence": sheikh_result.get("confidence", 0),
             "primary_reason": f"Shariah non-compliant: {sheikh_result.get('primary_reason', '')}",
             "sheikh_summary": sheikh_result.get("primary_reason", "HARAM"),
             "finance_summary": "Not evaluated — blocked by Shariah screen.",
             "accountant_summary": "Not evaluated — blocked by Shariah screen.",
-            "tax_warning": "",
-            "shariah_warning": sheikh_result.get("scholarly_concerns", ""),
-            "notification_message": f"REJECTED: {ticker} failed Shariah compliance screening. {sheikh_result.get('primary_reason', '')}",
             "requires_user_approval": False,
             "auto_execute_eligible": False,
+            "sheikh_result": sheikh_result,
         }
 
-    # Short-circuit: DOUBTFUL → MANUAL_REVIEW
-    if sheikh_result.get("verdict") == "DOUBTFUL":
-        logger.info("Sheikh verdict DOUBTFUL — flagging %s for manual review", ticker)
-        return {
-            "final_decision": "MANUAL_REVIEW",
-            "action": "HOLD",
-            "ticker": ticker,
-            "quantity": quantity,
-            "estimated_price": price,
-            "confidence": sheikh_result.get("confidence", 0),
-            "primary_reason": f"Shariah compliance uncertain: {sheikh_result.get('primary_reason', '')}",
-            "sheikh_summary": sheikh_result.get("primary_reason", "DOUBTFUL"),
-            "finance_summary": "Not evaluated — pending Shariah review.",
-            "accountant_summary": "Not evaluated — pending Shariah review.",
-            "tax_warning": "",
-            "shariah_warning": sheikh_result.get("scholarly_concerns", ""),
-            "notification_message": f"REVIEW REQUIRED: {ticker} has uncertain Shariah compliance. {sheikh_result.get('primary_reason', '')}",
-            "requires_user_approval": True,
-            "auto_execute_eligible": False,
-        }
+    # Step 2: Finance
+    logger.info("Pipeline 2/4: Finance agent for %s", ticker)
+    finance_result = finance_evaluate(**finance_kwargs)
 
-    # ── Step 2: Finance Agent ────────────────────────────────────────────
-    logger.info("Pipeline step 2/3: Finance agent for %s", ticker)
-    if finance_input is not None:
-        finance_result = finance_evaluate(**finance_input)
-    else:
-        logger.warning("No finance_input provided; using minimal defaults for %s", ticker)
-        finance_result = finance_evaluate(
-            ticker=ticker, current_price=price,
-            ema20=price, ema50=price, ema_signal="NEUTRAL",
-            news_sentiment_score=0.0, top_headlines=[],
-            earnings_surprise_pct=0.0, forward_pe=0.0,
-            analyst_consensus="none", vix_level=0.0,
-            macro_summary="No macro data available.",
-        )
+    # Step 3: Accountant
+    logger.info("Pipeline 3/4: Accountant agent for %s", ticker)
+    accountant_result = accountant_evaluate(**accountant_kwargs)
 
-    # ── Step 3: Accountant Agent ─────────────────────────────────────────
-    logger.info("Pipeline step 3/3: Accountant agent for %s", ticker)
-    if accountant_input is not None:
-        accountant_result = accountant_evaluate(**accountant_input)
-    else:
-        logger.warning("No accountant_input provided; using minimal defaults for %s", ticker)
-        from datetime import date
-        accountant_result = accountant_evaluate(
-            ticker=ticker, purchase_date=date.today().isoformat(),
-            purchase_price=price, current_price=price,
-            quantity=quantity, action_proposed=action,
-            user_income_bracket="24%", user_filing_status="single",
-            user_state="CA", ytd_realized_gains=0.0,
-            recent_sales_history=[],
-        )
-
-    # ── Step 4: Orchestrator LLM ─────────────────────────────────────────
-    logger.info("Synthesizing pipeline results for %s", ticker)
-
-    trade_value = price * quantity
-    orchestrator_input = {
-        "ticker": ticker,
-        "proposed_action": action,
-        "quantity": quantity,
-        "estimated_price": price,
-        "trade_value_usd": round(trade_value, 2),
-        "auto_execute_max_usd": AUTO_EXECUTE_MAX_USD,
-        "sheikh_result": sheikh_result,
-        "finance_result": finance_result,
-        "accountant_result": accountant_result,
-    }
-
-    try:
-        result = call_agent(SYSTEM_PROMPT, json.dumps(orchestrator_input))
-    except json.JSONDecodeError as e:
-        logger.error("Failed to parse Orchestrator response as JSON: %s", e)
-        return {
-            "final_decision": "HOLD",
-            "action": "HOLD",
-            "ticker": ticker,
-            "quantity": quantity,
-            "estimated_price": price,
-            "confidence": 0,
-            "primary_reason": f"Orchestrator response parsing error: {e}",
-            "sheikh_summary": sheikh_result.get("primary_reason", ""),
-            "finance_summary": finance_result.get("primary_reason", ""),
-            "accountant_summary": accountant_result.get("recommendation", ""),
-            "tax_warning": "",
-            "shariah_warning": "",
-            "notification_message": "Pipeline error — defaulting to HOLD.",
-            "requires_user_approval": True,
-            "auto_execute_eligible": False,
-        }
-
-    # ── Validate LLM output — enforce allowed values ─────────────────────
-    VALID_DECISIONS = {"EXECUTE", "HOLD", "REJECT", "MANUAL_REVIEW"}
-    VALID_ACTIONS = {"BUY", "SELL", "HOLD"}
-    if result.get("final_decision") not in VALID_DECISIONS:
-        result["final_decision"] = "HOLD"
-    if result.get("action") not in VALID_ACTIONS:
-        result["action"] = "HOLD"
-    result["confidence"] = max(0, min(100, int(result.get("confidence", 0))))
-    result["ticker"] = ticker  # Always use our known-good ticker
-    result["quantity"] = quantity  # Always use our known-good quantity
-
-    # ── Enforce auto_execute_eligible rules ──────────────────────────────
-    auto_eligible = (
-        sheikh_result.get("verdict") == "HALAL"
-        and sheikh_result.get("confidence", 0) > 90
-        and finance_result.get("signal") in ("BUY", "SELL")
-        and finance_result.get("confidence", 0) > 75
-        and accountant_result.get("tax_verdict") == "PROCEED"
-        and trade_value < AUTO_EXECUTE_MAX_USD
-    )
-    result["auto_execute_eligible"] = auto_eligible
-    if auto_eligible:
-        result["requires_user_approval"] = False
-
-    logger.info(
-        "Pipeline complete for %s: decision=%s action=%s auto_execute=%s",
-        ticker, result.get("final_decision"), result.get("action"), auto_eligible,
-    )
+    # Step 4: Orchestrator
+    logger.info("Pipeline 4/4: Orchestrator for %s", ticker)
+    result = orchestrate(ticker, sheikh_result, finance_result, accountant_result, user)
+    result["sheikh_result"] = sheikh_result
+    result["finance_result"] = finance_result
+    result["accountant_result"] = accountant_result
     return result
-
-
-if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python orchestrator.py <TICKER> <ACTION>")
-        print("  ACTION: BUY or SELL")
-        print("  Example: python orchestrator.py AAPL BUY")
-        sys.exit(1)
-
-    ticker_symbol = sys.argv[1].upper()
-    action_arg = sys.argv[2].upper()
-
-    # For standalone testing, run the pipeline with minimal defaults
-    result = run_pipeline(
-        ticker=ticker_symbol,
-        action=action_arg,
-        quantity=10,
-        price=150.00,
-    )
-
-    print(json.dumps(result, indent=2))

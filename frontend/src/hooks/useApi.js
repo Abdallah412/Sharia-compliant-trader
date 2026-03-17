@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
+const API_BASE = import.meta.env.VITE_API_URL || '';
+
 export function useApi(url, options = {}) {
   const { pollInterval = null, enabled = true } = options;
   const [data, setData] = useState(null);
@@ -9,7 +11,11 @@ export function useApi(url, options = {}) {
   const fetchData = useCallback(async () => {
     if (!enabled) return;
     try {
-      const res = await fetch(url);
+      const token = localStorage.getItem('access_token');
+      const headers = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
+
+      const res = await fetch(`${API_BASE}${url}`, { headers });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       setData(json);
