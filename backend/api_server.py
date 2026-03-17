@@ -28,6 +28,7 @@ logging.basicConfig(
 # ---------------------------------------------------------------------------
 from shariah_screener import ShariahScreener
 from data_fetcher import get_current_price, get_price_history, calculate_ema
+from portfolio_allocator import recommend_allocation, format_allocation_report
 from news_fetcher import get_news_sentiment
 from schwab_auth import get_client, get_account_balance, get_positions, get_token_age_days
 
@@ -344,6 +345,37 @@ async def toggle_bot():
     mode = "DRY RUN (paper)" if DRY_RUN else "LIVE TRADING"
     logger.info("Bot mode toggled to: %s", mode)
     return {"dry_run": DRY_RUN, "mode": mode}
+
+
+@app.post("/api/allocate")
+async def allocate_portfolio(
+    amount: float,
+    risk_profile: str = "moderate",
+    use_ai: bool = True,
+):
+    """
+    Given a dollar amount, recommend how to distribute funds across halal stocks.
+    risk_profile: 'conservative', 'moderate', or 'aggressive'
+    """
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    if risk_profile not in ("conservative", "moderate", "aggressive"):
+        raise HTTPException(
+            status_code=400,
+            detail="risk_profile must be 'conservative', 'moderate', or 'aggressive'",
+        )
+
+    try:
+        plan = recommend_allocation(amount, risk_profile=risk_profile, use_ai=use_ai)
+        if "error" in plan:
+            raise HTTPException(status_code=400, detail=plan["error"])
+        plan["formatted_report"] = format_allocation_report(plan)
+        return plan
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Allocation failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/api/approve/{trade_id}")

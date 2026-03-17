@@ -11,23 +11,25 @@ from backend.data_fetcher import calculate_ema, calculate_signal
 class TestGoldenCross:
     def test_golden_cross_buy_signal(self):
         """When EMA20 crosses above EMA50, signal should be BUY."""
-        # Build a price series where prices are low then rise sharply,
-        # causing the short EMA to cross above the long EMA at the end.
-        n = 80
-        prices = pd.Series(
-            [50.0] * 50 + [50.0 + i * 2.0 for i in range(1, n - 50 + 1)]
-        )
-        # Verify precondition: the last two EMA20/EMA50 values cross
+        # Strategy: start with a long downtrend (EMA20 well below EMA50),
+        # then inject a single massive spike on the last price so EMA20
+        # jumps above EMA50 on the final bar while the second-to-last bar
+        # still has EMA20 <= EMA50.
+        n = 70
+        # Gentle downtrend for most of the series
+        base = [100.0 - i * 0.3 for i in range(n)]
+        prices = pd.Series(base)
+
+        # Verify that EMA20 < EMA50 at position -1 (before we add the spike)
         ema20 = calculate_ema(prices, 20)
         ema50 = calculate_ema(prices, 50)
-        # Force a clean crossover by adjusting the second-to-last price
-        # so that ema20[-2] <= ema50[-2] and ema20[-1] > ema50[-1].
-        # The ramp above should naturally produce this — verify:
-        if not (ema20.iloc[-2] <= ema50.iloc[-2] and ema20.iloc[-1] > ema50.iloc[-1]):
-            # Construct a guaranteed crossover series
-            flat = [100.0] * 60
-            ramp = [100.0 + (i ** 2) * 0.5 for i in range(1, 21)]
-            prices = pd.Series(flat + ramp)
+        gap = ema50.iloc[-1] - ema20.iloc[-1]
+
+        # Add a big spike that will push EMA20 above EMA50
+        # EMA20 multiplier = 2/21 ≈ 0.095, so new_ema20 ≈ spike*0.095 + old*0.905
+        # We need: spike * 0.095 + ema20_now * 0.905 > ema50_now (roughly)
+        spike_needed = (ema50.iloc[-1] - ema20.iloc[-1] * 0.905) / 0.095 + 50
+        prices = pd.concat([prices, pd.Series([spike_needed])], ignore_index=True)
 
         signal, confidence = calculate_signal(prices)
         assert signal == "BUY"
@@ -37,10 +39,20 @@ class TestGoldenCross:
 class TestDeathCross:
     def test_death_cross_sell_signal(self):
         """When EMA20 crosses below EMA50, signal should be SELL."""
-        # Prices start high then drop sharply → short EMA crosses below long EMA.
-        high = [200.0] * 60
-        drop = [200.0 - (i ** 2) * 0.5 for i in range(1, 21)]
-        prices = pd.Series(high + drop)
+        # Strategy: start with a gentle uptrend (EMA20 above EMA50),
+        # then inject a massive drop on the last bar so EMA20 falls
+        # below EMA50.
+        n = 70
+        base = [100.0 + i * 0.3 for i in range(n)]
+        prices = pd.Series(base)
+
+        ema20 = calculate_ema(prices, 20)
+        ema50 = calculate_ema(prices, 50)
+
+        # EMA20 multiplier = 2/21 ≈ 0.095
+        # We need: drop * 0.095 + ema20_now * 0.905 < ema50_now (roughly)
+        drop_needed = (ema50.iloc[-1] - ema20.iloc[-1] * 0.905) / 0.095 - 50
+        prices = pd.concat([prices, pd.Series([drop_needed])], ignore_index=True)
 
         signal, confidence = calculate_signal(prices)
         assert signal == "SELL"

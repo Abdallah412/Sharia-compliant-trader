@@ -4,6 +4,7 @@ import HoldingsTable from './components/HoldingsTable'
 import PriceChart from './components/PriceChart'
 import TradeLog from './components/TradeLog'
 import ComplianceAlert from './components/ComplianceAlert'
+import AllocatorPanel from './components/AllocatorPanel'
 
 const POLL_INTERVAL = 30000
 
@@ -107,6 +108,9 @@ export default function App() {
             <PriceChart ticker={selectedTicker} />
           </div>
         </div>
+
+        {/* Portfolio Allocator */}
+        <AllocatorPanel />
 
         {/* Trade Log */}
         <TradeLog trades={trades} />
